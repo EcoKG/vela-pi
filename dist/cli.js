@@ -90,6 +90,23 @@ function parseCliArgs(argv) {
     }
     return flags;
 }
+function printVelaSail(version) {
+    const c = (s) => `\x1b[36m${s}\x1b[0m`; // cyan
+    const b = (s) => `\x1b[1m${s}\x1b[0m`; // bold
+    const bc = (s) => `\x1b[1m\x1b[36m${s}\x1b[0m`; // bold cyan
+    const d = (s) => `\x1b[2m${s}\x1b[0m`; // dim
+    process.stdout.write(`\n` +
+        `  ${bc("        ┃")}\n` +
+        `  ${bc("       ╱┃")}\n` +
+        `  ${bc("      ╱ ┃")}\n` +
+        `  ${bc("     ╱  ┃")}      ${b("V E L A")}\n` +
+        `  ${bc("    ╱   ┃")}      ${c(`v${version}`)}\n` +
+        `  ${bc("   ╱    ┃")}\n` +
+        `  ${bc("  ╱_____┃")}\n` +
+        `  ${c("≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈")}\n` +
+        `  ${d("pipeline engine — Shift+Tab to switch mode")}\n` +
+        `\n`);
+}
 function printHelp() {
     const c = (s) => `\x1b[36m${s}\x1b[0m`; // cyan
     const b = (s) => `\x1b[1m${s}\x1b[0m`; // bold
@@ -317,6 +334,8 @@ if (isPrintMode) {
 }
 // ─── Interactive TUI Mode ─────────────────────────────────────────────────────
 const initialMessage = cliFlags.messages.length > 0 ? cliFlags.messages.join(" ") : undefined;
+// Print VELA sail ASCII art before TUI takes over stdin
+printVelaSail(APP_VERSION);
 const interactiveMode = new InteractiveMode(runtime, {
     modelFallbackMessage,
     initialMessage,

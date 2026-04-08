@@ -2,15 +2,25 @@
  * Vela Extension — Entry Point
  *
  * Registers with the Pi SDK platform:
- *   - /vela command (start, status, cancel, help)
- *   - session_start hook (active pipeline awareness + persona injection)
+ *   - /vela command (start, status, cancel, help, mode, ...)
+ *   - session_start hook (active pipeline awareness + persona injection + status bar)
  *   - tool_call hook (mode-based gate enforcement: VK-01 through VK-08)
+ *
+ * Status bar items set via ctx.ui.setStatus:
+ *   vela-mode    — 🚀 pipeline | 🔍 explorer
+ *   vela-step    — step progress when pipeline active (3/12 execute)
+ *   vela-auto    — ⚡ auto when auto mode on
+ *   vela-sprint  — 🏃 sprint:2/5 when sprint active
+ *   vela-persona — ⛵ persona when persona file present
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { registerVelaCommands } from "./commands.js";
 import { checkToolCall } from "./guards.js";
-import { findActivePipelineState, getCurrentMode, loadPipelineDefinition, } from "./pipeline.js";
+import { findActivePipelineState, getCurrentMode, loadPipelineDefinition, cleanupStalePipelines, } from "./pipeline.js";
+import { readVelaMode, writeVelaMode, updateVelaStatus, readActiveSprintLabel, } from "./mode.js";
+// Re-export for consumers (commands.ts, etc.)
+export { readVelaMode, writeVelaMode, updateVelaStatus };
 // ─── Explorer Mode Prompt ─────────────────────────────────────────────────────
 const EXPLORER_MODE_PROMPT = `
 # VELA Explorer Mode — Active
@@ -29,14 +39,58 @@ You are operating in **Vela Explorer Mode**. This enforces fact-check-first answ
 - Making architecture claims: Grep for the patterns first.
 - Uncertain about a path: Glob it. If not found, say so.
 `.trim();
+const PIPELINE_MODE_PROMPT = `
+# VELA Pipeline Mode — Active
+
+You are operating in **Vela Pipeline Mode**. Focus on executing the current pipeline step precisely.
+
+## Core Rules
+1. **Follow the pipeline**: Check current step with \`/vela status\` and follow it exactly.
+2. **Use pipeline commands**: Use \`/vela dispatch\`, \`/vela transition\`, \`/vela record\` for all pipeline actions.
+3. **Step-scoped work**: Only work on what the current step requires — no scope creep.
+4. **Document progress**: Write artifacts to the pipeline artifact directory as required by each step.
+5. **Gate compliance**: Ensure exit gates are met before transitioning.
+
+## Quick Reference
+- \`/vela status\`             — current step and progress
+- \`/vela dispatch\`           — run agent for current step
+- \`/vela transition\`         — advance to next step
+- \`/vela record pass|fail\`   — record step verdict
+- \`/vela mode explorer\`      — switch to explorer mode
+`.trim();
+// ─── Extension Registration ───────────────────────────────────────────────────
 export default async function registerExtension(pi) {
     // ── /vela command ──────────────────────────────────────────────────────────
     registerVelaCommands(pi);
-    // ── session_start: surface active pipeline info ────────────────────────────
+    // ── Shift+Tab key handler (defensive — only if SDK supports key events) ───
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        pi.on?.("keypress", async (key, ctx) => {
+            // Shift+Tab = ESC [ Z
+            if (key === "\x1b[Z") {
+                const cwd = ctx.cwd;
+                const current = readVelaMode(cwd);
+                const next = current === "explorer" ? "pipeline" : "explorer";
+                writeVelaMode(cwd, next);
+                updateVelaStatus(ctx, cwd);
+                const label = next === "pipeline" ? "🚀 Pipeline Mode" : "🔍 Explorer Mode";
+                ctx.ui.notify(`⛵ VELA  ·  Mode → ${label}  (Shift+Tab to switch)`, "info");
+            }
+        });
+    }
+    catch { /* SDK does not support key events — use /vela mode instead */ }
+    // ── session_start: status bar + pipeline awareness + mode restore ──────────
     pi.on("session_start", async (_event, ctx) => {
-        const state = findActivePipelineState(ctx.cwd);
+        const cwd = ctx.cwd;
+        // Auto-cleanup stale pipelines on session start (improvement #13)
+        cleanupStalePipelines(cwd);
+        // Read persisted mode (improvement #15)
+        const mode = readVelaMode(cwd);
+        // Update all status bar items (improvements #2–6)
+        updateVelaStatus(ctx, cwd);
+        // ── Active pipeline banner ──────────────────────────────────────────
+        const state = findActivePipelineState(cwd);
         if (state) {
-            // Inline box helpers (commands.ts helpers not exported)
             const W = 52;
             const top = (title) => {
                 const dashes = "─".repeat(Math.max(0, W - 4 - title.length - 1));
@@ -51,51 +105,62 @@ export default async function registerExtension(pi) {
                 const dashes = "─".repeat(Math.max(0, W - 4 - note.length - 1));
                 return `╰─ ${note} ${dashes}╯`;
             };
-            const stepInfo = state.current_step_index !== undefined
-                ? `${state.current_step}  (${state.current_step_index + 1}/${(state.steps ?? []).length})`
-                : state.current_step;
-            ctx.ui.notify([
+            const stepIdx = (state.current_step_index ?? 0) + 1;
+            const total = (state.steps ?? []).length;
+            const stepInfo = `${state.current_step}  (${stepIdx}/${total})`;
+            const autoNote = state.auto ? "  ⚡ auto" : "";
+            const staleNote = state._stale ? "  ⚠ stale (>48h)" : "";
+            const notifyLines = [
                 top("⛵  VELA — Active Pipeline"),
                 line(`${"Course:".padEnd(9)} ${state.request}`),
-                line(`${"Heading:".padEnd(9)} ${stepInfo}`),
+                line(`${"Heading:".padEnd(9)} ${stepInfo}${autoNote}${staleNote}`),
                 line(`${"Type:".padEnd(9)} ${state.task_type ?? state.pipeline_type}`),
-                bot("/vela status for nav chart"),
-            ].join("\n"), "info");
+                line(`${"Mode:".padEnd(9)} ${mode === "pipeline" ? "🚀 pipeline" : "🔍 explorer"}`),
+            ];
+            // Show sprint status if active (improvement #16)
+            const sprintLine = readActiveSprintLabel(cwd);
+            if (sprintLine) {
+                notifyLines.push(line(`${"Sprint:".padEnd(9)} ${sprintLine}`));
+            }
+            notifyLines.push(bot("/vela status  ·  Shift+Tab to switch mode"));
+            ctx.ui.notify(notifyLines.join("\n"), "info");
         }
-        // ── Explorer Mode injection (default: always on) ──────────────────────
-        const explorerStatePath = join(ctx.cwd, ".vela", "state", "explorer.json");
-        let explorerEnabled = true;
+        // ── Mode system prompt injection ────────────────────────────────────
+        const explorerStatePath = join(cwd, ".vela", "state", "explorer.json");
+        let explorerEnabled = mode === "explorer"; // default from mode file
+        // Back-compat: if explorer.json exists, honour it
         if (existsSync(explorerStatePath)) {
             try {
                 explorerEnabled = JSON.parse(readFileSync(explorerStatePath, "utf8")).enabled ?? true;
             }
-            catch { /* default to enabled */ }
+            catch { /* default */ }
         }
-        if (explorerEnabled) {
+        if (mode === "explorer" && explorerEnabled) {
             ctx.ui.setStatus("vela-explorer", "🔍 explorer");
             await ctx.appendSystemPrompt?.(EXPLORER_MODE_PROMPT);
         }
-        // Surface persona status if .vela/persona.md exists
-        const personaPath = join(ctx.cwd, ".vela", "persona.md");
+        else if (mode === "pipeline") {
+            ctx.ui.setStatus("vela-explorer", "");
+            await ctx.appendSystemPrompt?.(PIPELINE_MODE_PROMPT);
+        }
+        // ── Persona injection ───────────────────────────────────────────────
+        const personaPath = join(cwd, ".vela", "persona.md");
         if (existsSync(personaPath)) {
             try {
                 const persona = readFileSync(personaPath, "utf8").trim();
-                if (persona && persona.length > 0) {
+                if (persona.length > 0) {
                     ctx.ui.setStatus("vela-persona", "⛵ persona");
-                    // append to system prompt if api available
                     await ctx.appendSystemPrompt?.(persona);
                 }
             }
-            catch {
-                // non-fatal
-            }
+            catch { /* non-fatal */ }
         }
     });
     // ── tool_call: enforce mode-based gates ───────────────────────────────────
     pi.on("tool_call", async (event, ctx) => {
         const state = findActivePipelineState(ctx.cwd);
         if (!state)
-            return; // no active pipeline → pass through
+            return;
         const def = loadPipelineDefinition(ctx.cwd);
         const mode = getCurrentMode(state, def);
         const result = checkToolCall(event.toolName, event.input, mode, state, ctx.cwd, def);
