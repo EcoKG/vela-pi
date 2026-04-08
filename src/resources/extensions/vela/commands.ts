@@ -44,6 +44,7 @@ import { runVelaAgent, getAvailableRoles } from "./dispatch.js";
 import {
   createSprint,
   findActiveSprint,
+  findResumableSprint,
   listSprints,
   loadSprint,
   updateSliceStatus,
@@ -805,8 +806,9 @@ async function executeSprintSlices(
 
     if (next.action === "run" && next.slice) {
       const slice = next.slice;
+      const pct = Math.round((plan.completed_slices / plan.total_slices) * 100);
       ctx.ui.notify(
-        `[Vela] Executing slice ${iteration}/${plan.total_slices}: ${slice.title}`,
+        `[Vela] [${pct}%] Executing slice ${iteration}/${plan.total_slices}: ${slice.title}`,
         "info"
       );
 
@@ -889,24 +891,103 @@ function cmdSprintStatus(
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
+function renderSliceDag(plan: SprintPlan, icons: Record<string, string>): string {
+  const slices = plan.slices;
+  if (slices.length === 0) return "";
+
+  // BFS to assign levels
+  const levels = new Map<string, number>();
+  const queue: string[] = [];
+
+  for (const s of slices) {
+    if (s.depends_on.length === 0) {
+      levels.set(s.id, 0);
+      queue.push(s.id);
+    }
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++];
+    const lvl = levels.get(id)!;
+    for (const s of slices) {
+      if (s.depends_on.includes(id)) {
+        const existing = levels.get(s.id) ?? -1;
+        if (existing < lvl + 1) {
+          levels.set(s.id, lvl + 1);
+          queue.push(s.id);
+        }
+      }
+    }
+  }
+
+  // Slices not reached by BFS (disconnected from roots) get level 0
+  for (const s of slices) {
+    if (!levels.has(s.id)) levels.set(s.id, 0);
+  }
+
+  const maxLevel = Math.max(...levels.values());
+  const lines: string[] = ["  DAG:"];
+  for (let lvl = 0; lvl <= maxLevel; lvl++) {
+    const atLevel = slices.filter((s) => levels.get(s.id) === lvl);
+    const row = atLevel.map((s) => `[${icons[s.status] ?? "?"} ${s.id}]`).join("  ");
+    lines.push(`    ${row}`);
+    if (lvl < maxLevel) lines.push("      ▼");
+  }
+  return lines.join("\n");
+}
+
 function formatSprintStatus(
   plan: SprintPlan,
   icons: Record<string, string>,
   ctx: ExtensionCommandContext
 ): void {
+  // Elapsed time
+  const elapsedMs =
+    new Date(plan.updated_at).getTime() - new Date(plan.created_at).getTime();
+  const elapsedStr =
+    elapsedMs < 60000
+      ? `${(elapsedMs / 1000).toFixed(0)}s`
+      : `${(elapsedMs / 60000).toFixed(1)}m`;
+
+  // Counts
+  const done    = plan.slices.filter((s) => s.status === "done").length;
+  const failed  = plan.slices.filter((s) => s.status === "failed").length;
+  const running = plan.slices.filter((s) => s.status === "running").length;
+  const pending = plan.slices.filter(
+    (s) => s.status === "planned" || s.status === "queued"
+  ).length;
+
+  const countParts = [`${done} done`];
+  if (failed > 0) countParts.push(`${failed} failed`);
+  if (running > 0) countParts.push(`${running} running`);
+  countParts.push(`${pending} pending`);
+  countParts.push(`(${elapsedStr})`);
+
   const lines = [
     `[Vela] Sprint: ${plan.title}`,
     `  ID:       ${plan.id}`,
     `  Status:   ${icons[plan.status] ?? ""} ${plan.status}`,
-    `  Progress: ${plan.completed_slices}/${plan.total_slices} slices`,
+    `  Progress: ${plan.completed_slices}/${plan.total_slices} slices — ${countParts.join("  ")}`,
     "",
     "  Slices:",
   ];
+
   for (const s of plan.slices) {
     const icon = icons[s.status] ?? "❓";
     const deps = s.depends_on.length > 0 ? ` (deps: ${s.depends_on.join(", ")})` : "";
-    lines.push(`    ${icon} ${s.id}: ${s.title}${deps}`);
+    let dur = "";
+    if (s.started_at && s.completed_at) {
+      const ms =
+        new Date(s.completed_at).getTime() - new Date(s.started_at).getTime();
+      dur = ` [${(ms / 1000).toFixed(1)}s]`;
+    }
+    lines.push(`    ${icon} ${s.id}: ${s.title}${deps}${dur}`);
   }
+
+  lines.push("");
+  lines.push(renderSliceDag(plan, icons));
+
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
@@ -924,15 +1005,32 @@ async function cmdSprintResume(
       return;
     }
   } else {
-    const active = findActiveSprint(cwd);
-    if (!active) {
-      ctx.ui.notify("[Vela] No active sprint to resume.", "info");
+    const resumable = findResumableSprint(cwd);
+    if (!resumable) {
+      ctx.ui.notify("[Vela] No active or failed sprint to resume.", "info");
       return;
     }
-    plan = active;
+    plan = resumable;
   }
 
-  ctx.ui.notify(`[Vela] Resuming sprint: ${plan.title} (${plan.completed_slices}/${plan.total_slices} done)`, "info");
+  // If sprint was failed, reset failed slices → queued and reactivate
+  if (plan.status === "failed") {
+    const failedSlices = plan.slices.filter((s) => s.status === "failed");
+    for (const s of failedSlices) {
+      updateSliceStatus(plan.id, s.id, { status: "queued" }, cwd);
+    }
+    updateSprintStatus(plan.id, "running", cwd);
+    ctx.ui.notify(
+      `[Vela] Restarting failed sprint: ${plan.title}\n  Reset ${failedSlices.length} failed slice(s) → queued`,
+      "info"
+    );
+  } else {
+    ctx.ui.notify(
+      `[Vela] Resuming sprint: ${plan.title} (${plan.completed_slices}/${plan.total_slices} done)`,
+      "info"
+    );
+  }
+
   await executeSprintSlices(plan.id, cwd, ctx);
 }
 

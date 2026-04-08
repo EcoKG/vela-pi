@@ -349,6 +349,59 @@ export function findActiveSprint(cwd: string): SprintPlan | null {
   return null;
 }
 
+// ─── findResumableSprint ──────────────────────────────────────────────────────
+
+/**
+ * Scan .vela/sprints/ in reverse chronological order and return the most recent
+ * sprint that can be resumed: prefers status=running, falls back to status=failed.
+ * Returns null if no resumable sprint exists.
+ */
+export function findResumableSprint(cwd: string): SprintPlan | null {
+  const dir = sprintsDir(cwd);
+  if (!existsSync(dir)) return null;
+
+  try {
+    const allDirs = readdirSync(dir)
+      .filter((d) => /^\d{8}T\d{6}-/.test(d))
+      .sort()
+      .reverse();
+
+    let failedCandidate: SprintPlan | null = null;
+
+    for (const entry of allDirs) {
+      const dirPath = join(dir, entry);
+      try {
+        if (!statSync(dirPath).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+
+      const planPath = join(dirPath, "sprint-plan.json");
+      if (!existsSync(planPath)) continue;
+
+      try {
+        const plan = JSON.parse(readFileSync(planPath, "utf8")) as SprintPlan;
+        if (plan.status === "running") {
+          plan._path = planPath;
+          plan._sprintDir = dirPath;
+          return plan; // running takes priority
+        }
+        if (plan.status === "failed" && !failedCandidate) {
+          plan._path = planPath;
+          plan._sprintDir = dirPath;
+          failedCandidate = plan;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return failedCandidate;
+  } catch {
+    return null;
+  }
+}
+
 // ─── listSprints ──────────────────────────────────────────────────────────────
 
 /**
