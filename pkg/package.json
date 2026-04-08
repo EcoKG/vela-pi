@@ -1,0 +1,8 @@
+{
+  "name": "vela-pi",
+  "version": "1.0.0",
+  "piConfig": {
+    "name": "vela",
+    "configDir": ".vela"
+  }
+}

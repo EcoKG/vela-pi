@@ -1,0 +1,308 @@
+{
+  "version": "1.2",
+  "pipelines": {
+    "standard": {
+      "description": "Full 12-step pipeline — research → plan → plan-check → checkpoint → branch → execute → verify → diff-summary → learning → commit → finalize",
+      "steps": [
+        {
+          "id": "init",
+          "name": "Initialize",
+          "actor": "pm",
+          "mode": "read",
+          "entry_gate": [],
+          "exit_gate": ["artifact_dir_created", "mode_detected", "git_clean"],
+          "artifacts": [".vela/artifacts/{YYYYMMDD}T{HHmmss}-{slug}/meta.json"],
+          "max_revisions": 1
+        },
+        {
+          "id": "research",
+          "name": "Research & Analysis",
+          "actor": "agent",
+          "mode": "rw-artifact",
+          "entry_gate": ["init_complete"],
+          "exit_gate": ["research_md_exists", "approval_exists"],
+          "artifacts": ["research.md"],
+          "max_revisions": 3,
+          "treenode_cache": true,
+          "team": {
+            "worker_role": "researcher",
+            "reviewer_role": "reviewer",
+            "approver": "pm"
+          }
+        },
+        {
+          "id": "plan",
+          "name": "Implementation Plan",
+          "actor": "agent",
+          "mode": "write",
+          "entry_gate": ["research_md_exists"],
+          "exit_gate": ["plan_md_exists", "plan_architecture_complete", "approval_exists"],
+          "artifacts": ["plan.md"],
+          "max_revisions": 3,
+          "team": {
+            "worker_role": "planner",
+            "reviewer_role": "reviewer",
+            "approver": "pm"
+          },
+          "architecture": {
+            "required_sections": ["## Architecture", "## Class Specification", "## Test Strategy"],
+            "min_section_bytes": 200
+          }
+        },
+        {
+          "id": "plan-check",
+          "name": "Plan Verification",
+          "actor": "agent",
+          "mode": "read",
+          "entry_gate": ["plan_md_exists"],
+          "exit_gate": ["plan_check_pass"],
+          "artifacts": ["plan-check.md"],
+          "max_revisions": 2
+        },
+        {
+          "id": "checkpoint",
+          "name": "User Approval",
+          "actor": "user",
+          "mode": "read",
+          "entry_gate": ["plan_check_pass"],
+          "exit_gate": ["user_approved"],
+          "artifacts": [],
+          "max_revisions": 1
+        },
+        {
+          "id": "branch",
+          "name": "Branch Creation",
+          "actor": "pm",
+          "mode": "read",
+          "entry_gate": ["user_approved"],
+          "exit_gate": ["branch_created"],
+          "artifacts": [],
+          "max_revisions": 1,
+          "skip_when": ["type in docs,analysis"],
+          "git": {
+            "modes": ["auto", "prompt", "none"],
+            "default_mode": "auto",
+            "prefix": "vela/",
+            "protected_branches": ["main", "master", "develop"]
+          }
+        },
+        {
+          "id": "execute",
+          "name": "Implementation",
+          "actor": "agent",
+          "mode": "readwrite",
+          "entry_gate": ["branch_created"],
+          "exit_gate": ["implementation_complete", "review_exists", "ref_integrity"],
+          "artifacts": ["task-summary.md"],
+          "max_revisions": 5,
+          "sub_phases": ["test-write", "implement", "refactor"],
+          "sub_phase_tracking": true,
+          "team": {
+            "worker_role": "executor",
+            "reviewer_role": "reviewer",
+            "approver": "pm"
+          }
+        },
+        {
+          "id": "verify",
+          "name": "Verification",
+          "actor": "agent",
+          "mode": "rw-artifact",
+          "entry_gate": ["implementation_complete"],
+          "exit_gate": ["verification_md_exists", "ref_integrity"],
+          "artifacts": ["verification.md"],
+          "max_revisions": 3
+        },
+        {
+          "id": "diff-summary",
+          "name": "Diff Summary Review",
+          "actor": "agent",
+          "mode": "rw-artifact",
+          "entry_gate": ["verification_md_exists"],
+          "exit_gate": ["diff_summary_exists"],
+          "artifacts": ["diff-summary.md", "approval-diff-summary.json"],
+          "max_revisions": 1
+        },
+        {
+          "id": "learning",
+          "name": "Learning Extraction",
+          "actor": "agent",
+          "mode": "rw-artifact",
+          "entry_gate": ["diff_summary_exists"],
+          "exit_gate": ["learning_md_exists"],
+          "artifacts": ["learning.md"],
+          "max_revisions": 1
+        },
+        {
+          "id": "commit",
+          "name": "Commit Changes",
+          "actor": "pm",
+          "mode": "read",
+          "entry_gate": ["learning_md_exists"],
+          "exit_gate": ["changes_committed"],
+          "artifacts": ["diff.patch"],
+          "max_revisions": 1,
+          "git": {
+            "conventional_commits": true,
+            "type_map": {
+              "code": "feat",
+              "code-bug": "fix",
+              "code-refactor": "refactor",
+              "docs": "docs",
+              "infra": "chore",
+              "analysis": "chore"
+            },
+            "include_pipeline_ref": true
+          }
+        },
+        {
+          "id": "finalize",
+          "name": "Finalization",
+          "actor": "pm",
+          "mode": "write",
+          "entry_gate": ["changes_committed"],
+          "exit_gate": ["report_md_exists"],
+          "artifacts": ["report.md"],
+          "max_revisions": 1,
+          "git": {
+            "pr_mode": "prompt",
+            "branch_cleanup_hint": true
+          }
+        }
+      ]
+    },
+
+    "quick": {
+      "description": "Quick 6-step pipeline — plan → execute → verify → commit → finalize (no research/plan-check/checkpoint/branch/diff-summary/learning)",
+      "inherits": "standard",
+      "steps_only": ["init", "plan", "execute", "verify", "commit", "finalize"],
+      "overrides": {
+        "plan": {
+          "entry_gate": ["init_complete"],
+          "exit_gate": ["plan_md_exists", "plan_architecture_complete"]
+        },
+        "execute": {
+          "entry_gate": ["plan_md_exists"]
+        },
+        "commit": {
+          "entry_gate": ["verification_md_exists"]
+        }
+      }
+    },
+
+    "trivial": {
+      "description": "Trivial 4-step pipeline — execute → commit → finalize (no planning, no verification gates)",
+      "inherits": "standard",
+      "steps_only": ["init", "execute", "commit", "finalize"],
+      "overrides": {
+        "execute": {
+          "entry_gate": ["init_complete"],
+          "exit_gate": ["implementation_complete"],
+          "max_revisions": 3
+        },
+        "commit": {
+          "entry_gate": ["implementation_complete"]
+        }
+      }
+    },
+
+    "ralph": {
+      "description": "Ralph TDD loop — execute ↔ verify repeats up to 10× until tests pass, then commit",
+      "inherits": "standard",
+      "steps_only": ["init", "execute", "verify", "commit", "finalize"],
+      "overrides": {
+        "execute": {
+          "entry_gate": ["init_complete"],
+          "exit_gate": ["implementation_complete"],
+          "max_revisions": 10,
+          "sub_phases": ["test-write", "implement", "refactor"],
+          "sub_phase_tracking": true
+        },
+        "verify": {
+          "entry_gate": ["implementation_complete"],
+          "exit_gate": ["verification_md_exists"],
+          "max_revisions": 10,
+          "ralph_loop": true
+        },
+        "commit": {
+          "entry_gate": ["verification_md_exists"]
+        }
+      }
+    },
+
+    "hotfix": {
+      "description": "Hotfix 3-step pipeline — execute → commit only (docs/config/README changes, no review)",
+      "inherits": "standard",
+      "steps_only": ["init", "execute", "commit"],
+      "overrides": {
+        "execute": {
+          "entry_gate": ["init_complete"],
+          "exit_gate": ["implementation_complete"],
+          "max_revisions": 2,
+          "mode": "write"
+        },
+        "commit": {
+          "entry_gate": ["implementation_complete"],
+          "exit_gate": ["changes_committed"]
+        }
+      }
+    }
+  },
+
+  "scales": {
+    "small":  "trivial",
+    "medium": "quick",
+    "large":  "standard",
+    "ralph":  "ralph",
+    "hotfix": "hotfix"
+  },
+
+  "modes": {
+    "read": {
+      "allowed_tools": ["Read", "Glob", "Grep", "Agent"],
+      "blocked_tools": ["Edit", "Write", "NotebookEdit"],
+      "bash_policy": "read_only",
+      "treenode_cache": true
+    },
+    "write": {
+      "allowed_tools": ["Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep"],
+      "blocked_tools": [],
+      "bash_policy": "blocked",
+      "treenode_cache": false
+    },
+    "readwrite": {
+      "allowed_tools": ["Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep", "Agent"],
+      "blocked_tools": [],
+      "bash_policy": "restricted",
+      "treenode_cache": true
+    },
+    "rw-artifact": {
+      "allowed_tools": ["Read", "Glob", "Grep", "Write", "Agent"],
+      "blocked_tools": ["Edit", "NotebookEdit"],
+      "bash_policy": "read_only",
+      "treenode_cache": true,
+      "artifact_write_only": true
+    }
+  },
+
+  "git": {
+    "gitignore_entries": [
+      ".vela/cache/",
+      ".vela/state/",
+      ".vela/artifacts/",
+      ".vela/sprints/",
+      ".vela/tracker-signals.json",
+      ".vela/write-log.jsonl",
+      "*.vela-tmp"
+    ]
+  },
+
+  "presets": {
+    "auth":      { "scale": "large",  "task_type": "code",           "hint": "인증/권한/OAuth 구현" },
+    "api-crud":  { "scale": "medium", "task_type": "code",           "hint": "CRUD API 엔드포인트 추가" },
+    "bugfix":    { "scale": "ralph",  "task_type": "code-bug",       "hint": "버그 수정 (TDD 반복 루프)" },
+    "refactor":  { "scale": "medium", "task_type": "code-refactor",  "hint": "코드 리팩터링" },
+    "migration": { "scale": "large",  "task_type": "code",           "hint": "DB 마이그레이션/스키마 변경" },
+    "docs":      { "scale": "hotfix", "task_type": "docs",           "hint": "문서/README/주석 수정" }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "vela",
+  "name": "Vela Workflow",
+  "version": "1.0.0",
+  "description": "Vela pipeline engine — deterministic 12-step sandbox for Claude Code",
+  "tier": "core",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "commands": ["vela"],
+    "hooks": [
+      "session_start",
+      "tool_call"
+    ]
+  }
+}
