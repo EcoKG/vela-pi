@@ -109,77 +109,93 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd, pipelineDef
     // ── VK-01 / VK-02: Bash enforcement ──────────────────────────────────────
     if (toolName === "Bash") {
         const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
-        // VK-06: Secret detection in Bash commands
+        // VK-06: Secret detection in Bash commands (all modes)
         for (const pattern of SECRET_PATTERNS) {
             if (pattern.test(cmd)) {
                 return { blocked: true, reason: `[Vela VK-06] Potential secret detected in Bash command. Blocked.`, code: "VK-06" };
             }
         }
-        // Resolve bash_policy from pipeline.json; fall back to mode-derived defaults
+        // Resolve bash_policy from pipeline.json; fall back to mode-derived defaults.
+        // In restricted (readwrite) mode, Bash is not blocked at VK level — it falls
+        // through to VG pipeline-state checks so VG-07 / VG-08 / VG-DESTROY / VG-14
+        // remain enforced in readwrite mode.
         const bashPolicy = modeDef?.bash_policy ??
             (mode === "write" ? "blocked" : mode === "readwrite" ? "restricted" : "read_only");
-        // restricted (readwrite): Bash allowed — return before chain-operator check
-        if (bashPolicy === "restricted")
-            return { blocked: false };
-        // VK-08: Chain operators — block unless ALL segments are safe-read
-        if (CHAIN_OPERATOR_RE.test(cmd)) {
-            const segments = cmd.split(/&&|\|\||;|\|/).map(s => s.trim()).filter(Boolean);
-            const allSegmentsSafe = segments.every(seg => SAFE_BASH_READ.test(seg));
-            if (!allSegmentsSafe) {
-                return {
-                    blocked: true,
-                    reason: `[Vela VK-08] Bash chain operator blocked: not all segments are safe-read commands.\n` +
-                        `  Unsafe segments: ${segments.filter(s => !SAFE_BASH_READ.test(s)).map(s => s.substring(0, 50)).join(", ")}\n` +
-                        `  Tip: Run each command separately, or ensure all parts are read-only.`,
-                    code: "VK-08",
-                };
+        if (bashPolicy !== "restricted") {
+            // VK-08: Chain operators — block unless ALL segments are safe-read
+            if (CHAIN_OPERATOR_RE.test(cmd)) {
+                const segments = cmd.split(/&&|\|\||;|\|/).map(s => s.trim()).filter(Boolean);
+                const allSegmentsSafe = segments.every(seg => SAFE_BASH_READ.test(seg));
+                if (!allSegmentsSafe) {
+                    return {
+                        blocked: true,
+                        reason: `[Vela VK-08] Bash chain operator blocked: not all segments are safe-read commands.\n` +
+                            `  Unsafe segments: ${segments.filter(s => !SAFE_BASH_READ.test(s)).map(s => s.substring(0, 50)).join(", ")}\n` +
+                            `  Tip: Run each command separately, or ensure all parts are read-only.`,
+                        code: "VK-08",
+                    };
+                }
+                // All segments safe — allow the chain
             }
-            // All segments are safe — allow the chain
-        }
-        // blocked (write mode): Bash is blocked entirely
-        if (bashPolicy === "blocked") {
-            return {
-                blocked: true,
-                reason: `[Vela VK-01] Bash is blocked in ${mode} mode. Use Write/Edit tools.`,
-                code: "VK-01",
-            };
-        }
-        // read_only (read / rw-artifact): only safe read commands allowed
-        if (SAFE_BASH_READ.test(cmd))
-            return { blocked: false };
-        for (const pattern of BASH_WRITE_PATTERNS) {
-            if (pattern.test(cmd)) {
+            if (bashPolicy === "blocked") {
                 return {
                     blocked: true,
-                    reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
+                    reason: `[Vela VK-01] Bash is blocked in ${mode} mode. Use Write/Edit tools.`,
                     code: "VK-01",
                 };
             }
+            // read_only: write patterns checked BEFORE safe-read allowlist so that
+            // commands like "echo hello > file.txt" are never let through.
+            for (const pattern of BASH_WRITE_PATTERNS) {
+                if (pattern.test(cmd)) {
+                    return {
+                        blocked: true,
+                        reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
+                        code: "VK-01",
+                    };
+                }
+            }
+            if (SAFE_BASH_READ.test(cmd))
+                return { blocked: false };
+            return {
+                blocked: true,
+                reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
+                code: "VK-02",
+            };
         }
-        return {
-            blocked: true,
-            reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
-            code: "VK-02",
-        };
+        // restricted: falls through to VG pipeline-state checks at end of function
     }
     // ── VK-03 / VK-04: Write-tool enforcement (data-driven from pipeline.json) ──
+    // Fallback blocked-tools map mirrors pipeline.json defaults for when no def is supplied.
+    const DEFAULT_BLOCKED = {
+        "read": ["Edit", "Write", "NotebookEdit"],
+        "rw-artifact": ["Edit", "NotebookEdit"],
+    };
     if (effectiveWriteTools.has(toolName)) {
-        // VK-03: tool appears in blocked_tools for this mode
-        const blockedInMode = modeDef
-            ? modeDef.blocked_tools.includes(toolName)
-            : mode === "read"; // fallback: all write tools blocked in read
-        if (blockedInMode) {
+        // VK-03: tool appears in blocked_tools for this mode (read → all write tools)
+        const readBlocked = modeDef
+            ? (mode !== "rw-artifact" && modeDef.blocked_tools.includes(toolName))
+            : mode === "read"; // fallback
+        if (readBlocked) {
             return {
                 blocked: true,
                 reason: `[Vela VK-03] ${toolName} blocked in ${mode} mode.`,
                 code: "VK-03",
             };
         }
-        // VK-04: artifact_write_only — tool is allowed but only inside .vela/artifacts/
-        const artifactOnly = modeDef
-            ? modeDef.artifact_write_only === true
-            : mode === "rw-artifact"; // fallback
-        if (artifactOnly) {
+        // VK-04: rw-artifact — Edit/NotebookEdit blocked; Write only inside .vela/artifacts/
+        const isRwArtifact = modeDef ? modeDef.artifact_write_only === true : mode === "rw-artifact";
+        if (isRwArtifact) {
+            const rwArtifactBlocked = modeDef
+                ? modeDef.blocked_tools.includes(toolName)
+                : (DEFAULT_BLOCKED["rw-artifact"] ?? []).includes(toolName);
+            if (rwArtifactBlocked) {
+                return {
+                    blocked: true,
+                    reason: `[Vela VK-04] ${toolName} is blocked in ${mode} mode. Use Write tool instead.`,
+                    code: "VK-04",
+                };
+            }
             const filePath = typeof toolInput.file_path === "string"
                 ? toolInput.file_path
                 : typeof toolInput.path === "string"

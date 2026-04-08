@@ -88,15 +88,15 @@ describe("VK-03: data-driven blocked_tools", () => {
         assert.equal(r.blocked, true);
         assert.equal(r.code, "VK-03");
     });
-    it("blocks Edit in rw-artifact mode (via blocked_tools)", () => {
+    it("blocks Edit in rw-artifact mode (via blocked_tools → VK-04)", () => {
         const r = checkToolCall("Edit", { file_path: "/project/src/foo.ts" }, "rw-artifact", null, undefined, MOCK_DEF);
         assert.equal(r.blocked, true);
-        assert.equal(r.code, "VK-03");
+        assert.equal(r.code, "VK-04");
     });
-    it("blocks NotebookEdit in rw-artifact mode (via blocked_tools)", () => {
+    it("blocks NotebookEdit in rw-artifact mode (via blocked_tools → VK-04)", () => {
         const r = checkToolCall("NotebookEdit", { file_path: "/foo.ipynb" }, "rw-artifact", null, undefined, MOCK_DEF);
         assert.equal(r.blocked, true);
-        assert.equal(r.code, "VK-03");
+        assert.equal(r.code, "VK-04");
     });
     it("allows Write in write mode (blocked_tools is empty)", () => {
         const r = checkToolCall("Write", { file_path: "/project/src/foo.ts" }, "write", null, undefined, MOCK_DEF);
@@ -231,7 +231,7 @@ describe("Extensibility: custom blocked_tools are enforced", () => {
         // Write is no longer in blocked_tools or effectiveWriteTools → allowed
         assert.equal(r.blocked, false);
     });
-    it("blocks a tool added to rw-artifact.blocked_tools", () => {
+    it("blocks a tool added to rw-artifact.blocked_tools (→ VK-04)", () => {
         const customDef = {
             ...MOCK_DEF,
             modes: {
@@ -244,7 +244,7 @@ describe("Extensibility: custom blocked_tools are enforced", () => {
         };
         const r = checkToolCall("Write", { file_path: "/project/.vela/artifacts/20240101T000000-slug/research.md" }, "rw-artifact", null, undefined, customDef);
         assert.equal(r.blocked, true);
-        assert.equal(r.code, "VK-03");
+        assert.equal(r.code, "VK-04");
     });
 });
 // ─── Security checks still apply regardless of def ───────────────────────────

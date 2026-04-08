@@ -87,6 +87,12 @@ export declare function loadSprint(sprintId: string, cwd: string): SprintPlan;
  */
 export declare function findActiveSprint(cwd: string): SprintPlan | null;
 /**
+ * Scan .vela/sprints/ in reverse chronological order and return the most recent
+ * sprint that can be resumed: prefers status=running, falls back to status=failed.
+ * Returns null if no resumable sprint exists.
+ */
+export declare function findResumableSprint(cwd: string): SprintPlan | null;
+/**
  * Return a summary list of all sprints, newest first.
  */
 export declare function listSprints(cwd: string): Array<{
