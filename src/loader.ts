@@ -22,12 +22,14 @@ const __dirname = dirname(__filename);
 // ─── Paths ───────────────────────────────────────────────────────────────────
 
 const velaRoot = resolve(__dirname, "..");
-const pkgDir = join(velaRoot, "pkg");
 
 // ─── PI_PACKAGE_DIR — must be set before any @mariozechner/pi-coding-agent import ──
-// SettingsManager / AuthStorage / DefaultResourceLoader read this to determine
-// APP_NAME, CONFIG_DIR_NAME, and default agent dir location.
-process.env.PI_PACKAGE_DIR = pkgDir;
+// Must point to @mariozechner/pi-coding-agent package root so that
+// getBuiltinThemes() can resolve dist/modes/interactive/theme/*.json
+const piAgentPkgJson = createRequire(import.meta.url).resolve(
+  "@mariozechner/pi-coding-agent/package.json"
+);
+process.env.PI_PACKAGE_DIR = dirname(piAgentPkgJson);
 process.env.PI_APP_NAME = "vela";
 process.title = "vela";
 
