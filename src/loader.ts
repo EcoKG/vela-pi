@@ -66,5 +66,16 @@ if (nodeMajor < MIN_NODE_MAJOR) {
 const velaExtPath = join(velaRoot, "dist", "resources", "extensions", "vela", "index.js");
 process.env.VELA_EXT_PATH = velaExtPath;
 
+// ─── Proxy setup ──────────────────────────────────────────────────────────────
+// Node.js fetch (undici) does not respect HTTP_PROXY/HTTPS_PROXY env vars
+// automatically. Set the global dispatcher so all fetch calls go through proxy.
+const proxyUrl =
+  process.env.HTTPS_PROXY ?? process.env.https_proxy ??
+  process.env.HTTP_PROXY  ?? process.env.http_proxy;
+if (proxyUrl) {
+  const { setGlobalDispatcher, ProxyAgent } = await import("undici");
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+}
+
 // ─── Delegate to standalone CLI ──────────────────────────────────────────────
 await import("./cli.js");
