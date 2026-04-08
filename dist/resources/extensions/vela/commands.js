@@ -48,7 +48,7 @@ function lbl(label, width = 9) {
 // ─── Registration ─────────────────────────────────────────────────────────────
 export function registerVelaCommands(pi) {
     pi.registerCommand("vela", {
-        description: "Vela pipeline engine — /vela start|status|transition|record|dispatch|branch|commit|history|auto|cancel|help",
+        description: "Vela pipeline engine — /vela start|status|transition|record|dispatch|branch|commit|history|auto|explorer|cancel|help",
         handler: async (args, ctx) => {
             const parts = args.trim().split(/\s+/);
             const sub = parts[0]?.toLowerCase();
@@ -88,6 +88,9 @@ export function registerVelaCommands(pi) {
                     break;
                 case "analyze":
                     await cmdAnalyze(parts.slice(1), ctx);
+                    break;
+                case "explorer":
+                    await cmdExplorer(parts.slice(1), ctx);
                     break;
                 case "cancel":
                     await cmdCancel(ctx);
@@ -939,6 +942,38 @@ async function cmdAnalyze(parts, ctx) {
         }
     }
 }
+async function cmdExplorer(args, ctx) {
+    const cwd = ctx.cwd;
+    const sub = args[0]?.toLowerCase();
+    const statePath = join(cwd, ".vela", "state", "explorer.json");
+    let enabled = true;
+    if (existsSync(statePath)) {
+        try {
+            enabled = JSON.parse(readFileSync(statePath, "utf8")).enabled ?? true;
+        }
+        catch { }
+    }
+    if (sub === "off") {
+        mkdirSync(join(cwd, ".vela", "state"), { recursive: true });
+        writeJSON(statePath, { enabled: false, updated_at: new Date().toISOString() });
+        ctx.ui.notify("[Vela] Explorer Mode disabled. Restart session to apply.", "info");
+    }
+    else if (sub === "on") {
+        mkdirSync(join(cwd, ".vela", "state"), { recursive: true });
+        writeJSON(statePath, { enabled: true, updated_at: new Date().toISOString() });
+        ctx.ui.notify("[Vela] Explorer Mode enabled. Restart session to apply.", "info");
+    }
+    else {
+        ctx.ui.notify([
+            boxTop("🔍  VELA — Explorer Mode"),
+            boxLine(`Status:   ${enabled ? "ON  (fact-check enforced)" : "OFF"}`),
+            boxLine(""),
+            boxLine("Default:  always ON"),
+            boxLine("Toggle:   /vela explorer on | off"),
+            boxBot("restart session to apply changes"),
+        ].join("\n"), "info");
+    }
+}
 async function cmdCancel(ctx) {
     const cwd = ctx.cwd;
     const state = findActivePipelineState(cwd);
@@ -1006,6 +1041,10 @@ function cmdHelp(ctx) {
         boxLine(""),
         boxLine("ANALYZE"),
         boxLine("  /vela analyze deps / security / quality / all"),
+        boxLine(""),
+        boxLine("EXPLORER MODE"),
+        boxLine("  /vela explorer           Show fact-check mode status"),
+        boxLine("  /vela explorer on|off    Toggle (default: ON)"),
         boxLine(""),
         boxBot(),
     ].join("\n"), "info");

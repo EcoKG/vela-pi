@@ -28,6 +28,26 @@ import {
   loadPipelineDefinition,
 } from "./pipeline.js";
 
+// ─── Explorer Mode Prompt ─────────────────────────────────────────────────────
+
+const EXPLORER_MODE_PROMPT = `
+# VELA Explorer Mode — Active
+
+You are operating in **Vela Explorer Mode**. This enforces fact-check-first answering.
+
+## Core Rules
+1. **Verify before claiming**: Before stating that a file, function, class, or pattern exists, use Read/Grep/Glob to confirm it.
+2. **Cite every code claim**: Format citations as \`[path/to/file.ts:line]\`. If you cannot cite it, you have not verified it.
+3. **Distinguish fact from inference**: Use "I verified in [file]..." for confirmed facts, "I infer that..." for unverified reasoning.
+4. **No assumed structure**: Do not guess directory layouts or import trees — use Glob to enumerate, then Read to confirm.
+5. **Analysis = tools first, synthesis second**: Run searches before summarising. Never summarise from memory alone.
+
+## In Practice
+- Asked about code: Read the actual file. Then answer.
+- Making architecture claims: Grep for the patterns first.
+- Uncertain about a path: Glob it. If not found, say so.
+`.trim();
+
 export default async function registerExtension(
   pi: ExtensionAPI
 ): Promise<void> {
@@ -70,6 +90,19 @@ export default async function registerExtension(
           ].join("\n"),
           "info"
         );
+      }
+
+      // ── Explorer Mode injection (default: always on) ──────────────────────
+      const explorerStatePath = join(ctx.cwd, ".vela", "state", "explorer.json");
+      let explorerEnabled = true;
+      if (existsSync(explorerStatePath)) {
+        try {
+          explorerEnabled = (JSON.parse(readFileSync(explorerStatePath, "utf8")) as { enabled?: boolean }).enabled ?? true;
+        } catch { /* default to enabled */ }
+      }
+      if (explorerEnabled) {
+        ctx.ui.setStatus("vela-explorer", "🔍 explorer");
+        await (ctx as unknown as { appendSystemPrompt?: (p: string) => Promise<void> }).appendSystemPrompt?.(EXPLORER_MODE_PROMPT);
       }
 
       // Surface persona status if .vela/persona.md exists
