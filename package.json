@@ -25,8 +25,7 @@
   "scripts": {
     "build": "tsc && npm run copy-assets",
     "copy-assets": "node -e \"const {cpSync,mkdirSync}=require('fs'); mkdirSync('dist/resources/extensions/vela/templates',{recursive:true}); cpSync('src/resources/extensions/vela/templates','dist/resources/extensions/vela/templates',{recursive:true});\"",
-    "dev": "node --experimental-strip-types src/loader.ts",
-    "prepare": "npm run build"
+    "dev": "node --experimental-strip-types src/loader.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "latest"
