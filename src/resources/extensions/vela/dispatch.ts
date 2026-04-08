@@ -99,6 +99,13 @@ Produce a structured research.md with:
 ## Output
 Write your research to: {ARTIFACT_DIR}/research.md
 Start with: # Research: {REQUEST}
+
+## Fact-Check Requirements (Explorer Mode)
+- Before listing any file as "affected", confirm it exists with Glob or Grep.
+- For every architectural claim, cite the source: \`[path/to/file.ts:line]\`.
+- If a pattern, import, or class you mention was not found by a tool call, mark it as "[unverified]".
+- Run at least one Grep/Glob before each major section of your analysis.
+- Do NOT infer directory structure — enumerate it with Glob first.
 `,
   },
 
@@ -528,7 +535,18 @@ async function runParallelResearch(opts: DispatchOptions): Promise<DispatchResul
       };
       const { session: s } = await createAgentSession(sessionOpts);
       try {
-        const prompt = `You are a ${key} analyst. Focus on: ${focus}\n\nRequest: ${request}\nTask type: ${taskType}\n\nAnalyse the codebase and write your findings as markdown. Be concise (200-400 tokens).`;
+        const prompt = `You are a ${key} analyst. Focus on: ${focus}
+
+Request: ${request}
+Task type: ${taskType}
+
+## Fact-Check Protocol (Explorer Mode)
+- Use Grep/Glob/Read to verify every claim before writing it.
+- Cite file paths for all findings: \`[path/to/file.ts:line]\`.
+- Mark anything not verified by a tool call as "[inferred]".
+- Do not assume code structure — search for it.
+
+Analyse the codebase and write your findings as markdown. Be concise (200-400 tokens).`;
         let timedOut = false;
         const th = setTimeout(() => { timedOut = true; s.abort().catch(() => {}); }, timeoutMs / 3);
         try { await s.prompt(prompt); } finally { clearTimeout(th); }
