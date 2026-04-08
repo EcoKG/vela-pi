@@ -8,7 +8,6 @@
  *   - Git state snapshot + branch/commit helpers
  *   - Artifact cleanup
  */
-import { execSync } from "node:child_process";
 export declare const PROTECTED_BRANCHES: string[];
 export type PipelineMode = "read" | "write" | "readwrite" | "rw-artifact";
 export interface PipelineStep {
@@ -190,9 +189,9 @@ export declare function cleanupCancelledArtifacts(cwd: string, hoursOld?: number
 export declare function cleanupStalePipelines(cwd: string, hoursOld?: number): number;
 /** Atomic JSON write via tmp → rename. */
 export declare function writeJSON(filePath: string, data: unknown): void;
+export declare function persistState(state: PipelineState): void;
 /** Generate a URL-safe slug from a string (max 40 chars). */
 export declare function slugify(text: string): string;
 /** Format a Date as YYYYMMDDTHHMMSS. */
 export declare function formatTimestamp(d?: Date): string;
-export { execSync };
 //# sourceMappingURL=pipeline.d.ts.map

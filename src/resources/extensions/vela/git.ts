@@ -14,7 +14,7 @@ import { PROTECTED_BRANCHES } from "./pipeline.js";
 
 // ─── Internal helper ─────────────────────────────────────────────────────────
 
-function git(cwd: string, ...args: string[]): string {
+export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],

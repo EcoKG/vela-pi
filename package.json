@@ -28,7 +28,7 @@
     "dev": "node --experimental-strip-types src/loader.ts"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "latest"
+    "@mariozechner/pi-coding-agent": "^0.65.2"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

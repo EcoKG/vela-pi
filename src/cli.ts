@@ -38,6 +38,17 @@ import {
   runRpcMode,
 } from "@mariozechner/pi-coding-agent";
 
+// ─── VelaRuntime Interface ────────────────────────────────────────────────────
+
+interface VelaRuntime {
+  diagnostics: Array<{ type: string; message: string }>;
+  dispose(): Promise<void>;
+  services: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    modelRegistry: { getAvailable(): Array<{ provider: string; id: string; name: string } & Record<string, any>> };
+  };
+}
+
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const __filename = fileURLToPath(import.meta.url);
@@ -310,11 +321,11 @@ const runtime = await createAgentSessionRuntime(createRuntime, {
   sessionManager,
 });
 
+const typedRuntime = runtime as unknown as VelaRuntime;
 const { session, modelFallbackMessage } = runtime;
 
 // Log non-fatal extension errors
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-for (const diagnostic of (runtime as any).diagnostics) {
+for (const diagnostic of typedRuntime.diagnostics) {
   if (diagnostic.type === "error") {
     process.stderr.write(`[${APP_NAME}] ${diagnostic.message}\n`);
   }
@@ -323,37 +334,29 @@ for (const diagnostic of (runtime as any).diagnostics) {
 // ─── --list-models ────────────────────────────────────────────────────────────
 
 if (cliFlags.listModels !== undefined) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const modelRegistry = (runtime as any).services.modelRegistry;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const models: any[] = modelRegistry.getAvailable();
+  const modelRegistry = typedRuntime.services.modelRegistry;
+  const models = modelRegistry.getAvailable();
   if (models.length === 0) {
     console.log("No models available. Set ANTHROPIC_API_KEY or configure auth.json.");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (runtime as any).dispose();
+    await typedRuntime.dispose();
     process.exit(0);
   }
 
   const searchPattern =
     typeof cliFlags.listModels === "string" ? cliFlags.listModels : undefined;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let filtered: any[] = models;
+  let filtered = models;
   if (searchPattern) {
     const q = searchPattern.toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    filtered = models.filter((m: any) =>
+    filtered = models.filter((m) =>
       `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q)
     );
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  filtered.sort((a: any, b: any) =>
-    (a.provider as string).localeCompare(b.provider) ||
-    (a.id as string).localeCompare(b.id)
+  filtered.sort((a, b) =>
+    a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id)
   );
 
   const hdrs = ["provider", "model", "name"];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rows = filtered.map((m: any) => [m.provider, m.id, m.name] as string[]);
+  const rows = filtered.map((m) => [m.provider, m.id, m.name]);
   const widths = hdrs.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length))
   );
@@ -361,26 +364,24 @@ if (cliFlags.listModels !== undefined) {
   console.log(hdrs.map((h, i) => pad(h, widths[i])).join("  "));
   console.log(widths.map((w) => "-".repeat(w)).join("  "));
   for (const row of rows) {
-    console.log(row.map((c: string, i: number) => pad(c, widths[i])).join("  "));
+    console.log(row.map((c, i) => pad(c, widths[i])).join("  "));
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (runtime as any).dispose();
+  await typedRuntime.dispose();
   process.exit(0);
 }
 
 // ─── Apply --model override ───────────────────────────────────────────────────
 
 if (cliFlags.model) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const modelRegistry = (runtime as any).services.modelRegistry;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const available: any[] = modelRegistry.getAvailable() as any[];
+  const modelRegistry = typedRuntime.services.modelRegistry;
+  const available = modelRegistry.getAvailable();
   const match =
-    available.find((m: any) => m.id === cliFlags.model) ??
-    available.find((m: any) => `${m.provider}/${m.id}` === cliFlags.model);
+    available.find((m) => m.id === cliFlags.model) ??
+    available.find((m) => `${m.provider}/${m.id}` === cliFlags.model);
   if (match) {
     try {
-      await session.setModel(match);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await session.setModel(match as any);
     } catch {
       // non-fatal
     }
@@ -394,8 +395,7 @@ if (isPrintMode) {
 
   if (mode === "rpc") {
     await runRpcMode(runtime);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (runtime as any).dispose();
+    await typedRuntime.dispose();
     process.exit(0);
   }
 
@@ -405,8 +405,7 @@ if (isPrintMode) {
     initialMessage,
     messages: cliFlags.messages.slice(1),
   });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (runtime as any).dispose();
+  await typedRuntime.dispose();
   process.exit(0);
 }
 
@@ -422,6 +421,5 @@ const interactiveMode = new InteractiveMode(runtime, {
 });
 
 await interactiveMode.run();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-await (runtime as any).dispose();
+await typedRuntime.dispose();
 process.exit(0);

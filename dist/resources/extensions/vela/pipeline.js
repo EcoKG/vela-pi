@@ -10,7 +10,8 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, } from "node:fs";
 import { join, dirname } from "node:path";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { git as gitExec } from "./git.js";
 // ─── Constants ────────────────────────────────────────────────────────────────
 export const PROTECTED_BRANCHES = ["main", "master", "develop"];
 // ─── State Location ───────────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ export function findActivePipelineState(cwd) {
                 state._path = statePath;
                 state._artifactDir = dirPath;
                 const mtime = statSync(statePath).mtimeMs;
-                if (Date.now() - mtime > 24 * 60 * 60 * 1000)
+                if (Date.now() - mtime > 48 * 60 * 60 * 1000)
                     state._stale = true;
                 return state;
             }
@@ -727,7 +728,7 @@ export function writeJSON(filePath, data) {
     writeFileSync(tmp, JSON.stringify(data, null, 2));
     renameSync(tmp, filePath);
 }
-function persistState(state) {
+export function persistState(state) {
     if (!state._path)
         return;
     const clean = { ...state };
@@ -753,13 +754,6 @@ export function formatTimestamp(d = new Date()) {
     return (`${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
         `T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`);
 }
-function gitExec(cwd, ...args) {
-    return execFileSync("git", args, {
-        cwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 15000,
-    }).toString();
-}
 function deriveCwd(state) {
     const artifactDir = state._artifactDir ?? state.artifact_dir;
     if (!artifactDir)
@@ -767,5 +761,4 @@ function deriveCwd(state) {
     // .vela/artifacts/{slug} → project root is 3 levels up
     return dirname(dirname(dirname(artifactDir)));
 }
-export { execSync };
 //# sourceMappingURL=pipeline.js.map

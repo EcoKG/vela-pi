@@ -246,39 +246,31 @@ const runtime = await createAgentSessionRuntime(createRuntime, {
     agentDir,
     sessionManager,
 });
+const typedRuntime = runtime;
 const { session, modelFallbackMessage } = runtime;
 // Log non-fatal extension errors
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-for (const diagnostic of runtime.diagnostics) {
+for (const diagnostic of typedRuntime.diagnostics) {
     if (diagnostic.type === "error") {
         process.stderr.write(`[${APP_NAME}] ${diagnostic.message}\n`);
     }
 }
 // ─── --list-models ────────────────────────────────────────────────────────────
 if (cliFlags.listModels !== undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const modelRegistry = runtime.services.modelRegistry;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const modelRegistry = typedRuntime.services.modelRegistry;
     const models = modelRegistry.getAvailable();
     if (models.length === 0) {
         console.log("No models available. Set ANTHROPIC_API_KEY or configure auth.json.");
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await runtime.dispose();
+        await typedRuntime.dispose();
         process.exit(0);
     }
     const searchPattern = typeof cliFlags.listModels === "string" ? cliFlags.listModels : undefined;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let filtered = models;
     if (searchPattern) {
         const q = searchPattern.toLowerCase();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         filtered = models.filter((m) => `${m.provider} ${m.id} ${m.name}`.toLowerCase().includes(q));
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    filtered.sort((a, b) => a.provider.localeCompare(b.provider) ||
-        a.id.localeCompare(b.id));
+    filtered.sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
     const hdrs = ["provider", "model", "name"];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rows = filtered.map((m) => [m.provider, m.id, m.name]);
     const widths = hdrs.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
     const pad = (s, w) => s.padEnd(w);
@@ -287,20 +279,18 @@ if (cliFlags.listModels !== undefined) {
     for (const row of rows) {
         console.log(row.map((c, i) => pad(c, widths[i])).join("  "));
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await runtime.dispose();
+    await typedRuntime.dispose();
     process.exit(0);
 }
 // ─── Apply --model override ───────────────────────────────────────────────────
 if (cliFlags.model) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const modelRegistry = runtime.services.modelRegistry;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const modelRegistry = typedRuntime.services.modelRegistry;
     const available = modelRegistry.getAvailable();
     const match = available.find((m) => m.id === cliFlags.model) ??
         available.find((m) => `${m.provider}/${m.id}` === cliFlags.model);
     if (match) {
         try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await session.setModel(match);
         }
         catch {
@@ -313,8 +303,7 @@ if (isPrintMode) {
     const mode = cliFlags.mode ?? "text";
     if (mode === "rpc") {
         await runRpcMode(runtime);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await runtime.dispose();
+        await typedRuntime.dispose();
         process.exit(0);
     }
     const initialMessage = cliFlags.messages[0];
@@ -323,8 +312,7 @@ if (isPrintMode) {
         initialMessage,
         messages: cliFlags.messages.slice(1),
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await runtime.dispose();
+    await typedRuntime.dispose();
     process.exit(0);
 }
 // ─── Interactive TUI Mode ─────────────────────────────────────────────────────
@@ -335,7 +323,6 @@ const interactiveMode = new InteractiveMode(runtime, {
     verbose: cliFlags.verbose === true,
 });
 await interactiveMode.run();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-await runtime.dispose();
+await typedRuntime.dispose();
 process.exit(0);
 //# sourceMappingURL=cli.js.map

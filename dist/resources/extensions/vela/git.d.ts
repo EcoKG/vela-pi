@@ -8,6 +8,7 @@
  * options: { cwd, stdio: ["pipe","pipe","pipe"], timeout: 15000 }.
  * Operations that can fail return { ok: false, error } and never throw.
  */
+export declare function git(cwd: string, ...args: string[]): string;
 export interface GitStatusResult {
     isClean: boolean;
     dirtyFiles: string[];

@@ -22,7 +22,7 @@ export const SAFE_BASH_READ =
 
 /** Bash patterns that write to the filesystem */
 export const BASH_WRITE_PATTERNS: RegExp[] = [
-  /(?<!\d)>\s*\S/, // redirect to file (not 2>&1)
+  /(?<![0-9&])>\s*(?!&)/, // redirect to file (not 2>&1)
   /\|\s*tee\s/, // pipe to tee
   /\bcp\s/, // copy
   /\bmv\s/, // move
@@ -109,6 +109,16 @@ export function checkToolCall(
     const cmd =
       typeof toolInput.command === "string" ? toolInput.command : "";
 
+    // VK-06: Secret detection in Bash commands
+    for (const pattern of SECRET_PATTERNS) {
+      if (pattern.test(cmd)) {
+        return { blocked: true, reason: `[Vela VK-06] Potential secret detected in Bash command. Blocked.`, code: "VK-06" };
+      }
+    }
+
+    // readwrite: Bash allowed without further checks
+    if (mode === "readwrite") return { blocked: false };
+
     // VK-08: Chain operators — block unless ALL segments are safe-read
     if (CHAIN_OPERATOR_RE.test(cmd)) {
       // Split on chain operators and check each segment
@@ -174,6 +184,9 @@ export function checkToolCall(
     }
 
     if (mode === "rw-artifact") {
+      if (toolName === "Edit" || toolName === "NotebookEdit") {
+        return { blocked: true, reason: `[Vela VK-04] ${toolName} is blocked in rw-artifact mode. Use Write tool instead.`, code: "VK-04" };
+      }
       // Only allow writes to the artifact directory (VK-04 equivalent)
       const filePath =
         typeof toolInput.file_path === "string"
@@ -233,27 +246,30 @@ export function checkToolCall(
 
   // ── VK-07: PM actor — write tools require delegation.json ────────────────
   if (WRITE_TOOLS.has(toolName) && state) {
-    // PM actor check: if current step actor is "pm", writes need delegation
-    // (PM should orchestrate via dispatch, not write code directly)
-    // This is only enforced when we have pipeline state context
-    const artifactDir = state._artifactDir ?? state.artifact_dir;
-    if (artifactDir) {
-      const delegationPath = join(artifactDir, "delegation.json");
-      if (!existsSync(delegationPath)) {
-        // Check if it's a source file (not artifact dir)
-        const filePath =
-          typeof toolInput.file_path === "string" ? toolInput.file_path :
-          typeof toolInput.path === "string" ? toolInput.path : "";
-        const isArtifactWrite = filePath.startsWith(artifactDir) ||
-                                 filePath.includes("/.vela/");
-        if (!isArtifactWrite && filePath) {
-          return {
-            blocked: true,
-            reason: `[Vela VK-07] PM cannot write source files directly without delegation.json.\n` +
-              `  File: ${filePath}\n` +
-              `  Use /vela dispatch to delegate to an executor agent.`,
-            code: "VK-07",
-          };
+    const PM_STEPS = new Set(["init", "branch", "commit", "finalize"]);
+    if (PM_STEPS.has(state.current_step)) {
+      // PM actor check: if current step actor is "pm", writes need delegation
+      // (PM should orchestrate via dispatch, not write code directly)
+      // This is only enforced when we have pipeline state context
+      const artifactDir = state._artifactDir ?? state.artifact_dir;
+      if (artifactDir) {
+        const delegationPath = join(artifactDir, "delegation.json");
+        if (!existsSync(delegationPath)) {
+          // Check if it's a source file (not artifact dir)
+          const filePath =
+            typeof toolInput.file_path === "string" ? toolInput.file_path :
+            typeof toolInput.path === "string" ? toolInput.path : "";
+          const isArtifactWrite = filePath.startsWith(artifactDir) ||
+                                   filePath.includes("/.vela/");
+          if (!isArtifactWrite && filePath) {
+            return {
+              blocked: true,
+              reason: `[Vela VK-07] PM cannot write source files directly without delegation.json.\n` +
+                `  File: ${filePath}\n` +
+                `  Use /vela dispatch to delegate to an executor agent.`,
+              code: "VK-07",
+            };
+          }
         }
       }
     }

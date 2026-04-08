@@ -22,7 +22,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, dirname, basename } from "node:path";
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { git as gitExec } from "./git.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -195,7 +196,7 @@ export function findActivePipelineState(cwd: string): PipelineState | null {
         state._path = statePath;
         state._artifactDir = dirPath;
         const mtime = statSync(statePath).mtimeMs;
-        if (Date.now() - mtime > 24 * 60 * 60 * 1000) state._stale = true;
+        if (Date.now() - mtime > 48 * 60 * 60 * 1000) state._stale = true;
         return state;
       } catch {
         // corrupt — skip
@@ -969,7 +970,7 @@ export function writeJSON(filePath: string, data: unknown): void {
   renameSync(tmp, filePath);
 }
 
-function persistState(state: PipelineState): void {
+export function persistState(state: PipelineState): void {
   if (!state._path) return;
   const clean = { ...state };
   delete clean._path;
@@ -1000,14 +1001,6 @@ export function formatTimestamp(d: Date = new Date()): string {
   );
 }
 
-function gitExec(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 15000,
-  }).toString();
-}
-
 function deriveCwd(state: PipelineState): string | null {
   const artifactDir = state._artifactDir ?? state.artifact_dir;
   if (!artifactDir) return null;
@@ -1015,4 +1008,3 @@ function deriveCwd(state: PipelineState): string | null {
   return dirname(dirname(dirname(artifactDir)));
 }
 
-export { execSync };
