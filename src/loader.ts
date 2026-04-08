@@ -26,10 +26,16 @@ const velaRoot = resolve(__dirname, "..");
 // ─── PI_PACKAGE_DIR — must be set before any @mariozechner/pi-coding-agent import ──
 // Must point to @mariozechner/pi-coding-agent package root so that
 // getBuiltinThemes() can resolve dist/modes/interactive/theme/*.json
-const piAgentPkgJson = createRequire(import.meta.url).resolve(
-  "@mariozechner/pi-coding-agent/package.json"
-);
-process.env.PI_PACKAGE_DIR = dirname(piAgentPkgJson);
+//
+// We cannot use require.resolve("@mariozechner/pi-coding-agent/package.json")
+// because the package's "exports" field does not expose ./package.json.
+// Instead, resolve the main entry and extract the package root from the path.
+const piAgentMain = createRequire(import.meta.url).resolve("@mariozechner/pi-coding-agent");
+const piAgentNeedle = join("node_modules", "@mariozechner", "pi-coding-agent");
+const piAgentCut = piAgentMain.indexOf(piAgentNeedle);
+process.env.PI_PACKAGE_DIR = piAgentCut >= 0
+  ? piAgentMain.slice(0, piAgentCut + piAgentNeedle.length)
+  : dirname(piAgentMain);
 process.env.PI_APP_NAME = "vela";
 process.title = "vela";
 
