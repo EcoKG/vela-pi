@@ -519,6 +519,10 @@ function buildContextPrompt(artifactDir, role) {
         "diff-summary": ["task-summary.md", "diff.patch"],
         learning: ["research.md", "plan.md", "review-execute.md", "diff-summary.md"],
         finalizer: ["research.md", "plan.md", "task-summary.md", "review-execute.md", "diff-summary.md", "learning.md"],
+        pm: [
+            "research.md", "plan.md", "plan-check.md", "task-summary.md",
+            "review-execute.md", "approval-execute.json", "verification.md", "diff-summary.md",
+        ],
     };
     const files = inputFiles[role] ?? [];
     const parts = [];

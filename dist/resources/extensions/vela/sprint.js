@@ -22,12 +22,13 @@ const SPRINTS_DIR = SPRINTS_DIR_REL;
 const SLICE_TRANSITIONS = {
     planned: new Set(["queued", "skipped"]),
     queued: new Set(["planned", "running", "skipped"]),
-    running: new Set(["queued", "done", "failed"]),
+    running: new Set(["queued", "done", "failed", "skipped"]),
     failed: new Set(["queued"]),
 };
 const SPRINT_TRANSITIONS = {
     planned: new Set(["running", "cancelled"]),
     running: new Set(["done", "failed", "cancelled"]),
+    failed: new Set(["running", "cancelled"]),
 };
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 /** Resolve the absolute .vela/sprints directory for a given cwd. */
@@ -390,7 +391,7 @@ export function getNextSlice(plan) {
     // 4. First planned slice whose dependencies are all satisfied
     const terminalIds = new Set(slices.filter((s) => s.status === "done" || s.status === "skipped").map((s) => s.id));
     for (const slice of slices) {
-        if (slice.status !== "planned")
+        if (slice.status !== "queued" && slice.status !== "planned")
             continue;
         const deps = slice.depends_on ?? [];
         if (deps.every((dep) => terminalIds.has(dep))) {

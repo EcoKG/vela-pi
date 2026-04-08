@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { PROTECTED_BRANCHES } from "./pipeline.js";
 // ─── Internal helper ─────────────────────────────────────────────────────────
-function git(cwd, ...args) {
+export function git(cwd, ...args) {
     return execFileSync("git", args, {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],

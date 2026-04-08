@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cleanupCancelledArtifacts, cleanupStalePipelines, commitPipeline, createPipelineBranch, findActivePipelineState, formatTimestamp, getCurrentMode, listPipelineHistory, loadPipelineDefinition, recordStep, resolveSteps, slugify, snapshotGitState, subTransitionPipeline, transitionPipeline, writeJSON, } from "./pipeline.js";
+import { cleanupCancelledArtifacts, cleanupStalePipelines, commitPipeline, createPipelineBranch, findActivePipelineState, formatTimestamp, getCurrentMode, listPipelineHistory, loadPipelineDefinition, persistState, recordStep, resolveSteps, slugify, snapshotGitState, subTransitionPipeline, transitionPipeline, writeJSON, } from "./pipeline.js";
 import { runVelaAgent, getAvailableRoles } from "./dispatch.js";
 import { createSprint, findActiveSprint, listSprints, loadSprint, updateSliceStatus, updateSprintStatus, getNextSlice, generateSprintSummary, buildSliceContext, } from "./sprint.js";
 // ─── UI Box Helpers ───────────────────────────────────────────────────────────
@@ -175,12 +175,8 @@ async function cmdStart(request, ctx) {
     }
     // Clean up old cancelled artifacts and stale pipelines
     const cleaned = cleanupCancelledArtifacts(cwd, 24);
-    cleanupStalePipelines(cwd);
-    // Load pipeline definition
-    const def = loadPipelineDefinition(cwd);
-    if (!def) {
-        ensurePipelineTemplate(cwd, ctx);
-    }
+    const staleCleaned = cleanupStalePipelines(cwd);
+    const totalCleaned = cleaned + staleCleaned;
     const taskType = detectTaskType(cleanRequest);
     // Git state snapshot
     const gitState = snapshotGitState(cwd);
@@ -257,7 +253,7 @@ async function cmdStart(request, ctx) {
         boxLine(`${lbl("Type:")}   ${taskType}`),
         boxLine(`${lbl("Route:")}  ${route}`),
         boxLine(`${lbl("Artifact:")} .vela/artifacts/${artifactDirName}`),
-        ...(cleaned > 0 ? [boxLine(`Cleaned ${cleaned} old cancelled artifact(s).`)] : []),
+        ...(totalCleaned > 0 ? [boxLine(`Cleaned ${totalCleaned} old artifact(s).`)] : []),
         boxBot(),
     ];
     ctx.ui.notify(lines.join("\n"), "info");
@@ -728,7 +724,7 @@ function cmdSprintCancel(sprintId, cwd, ctx) {
     // Cancel running slices
     for (const s of plan.slices) {
         if (s.status === "running") {
-            updateSliceStatus(plan.id, s.id, { status: "failed", result: "Cancelled", completed_at: new Date().toISOString() }, cwd);
+            updateSliceStatus(plan.id, s.id, { status: "skipped", result: "Cancelled by user", completed_at: new Date().toISOString() }, cwd);
         }
     }
     updateSprintStatus(plan.id, "cancelled", cwd);
@@ -795,7 +791,7 @@ async function cmdAuto(ctx) {
         // Turn OFF
         state.auto = false;
         state.updated_at = new Date().toISOString();
-        persistStateFromCmd(state);
+        persistState(state);
         ctx.ui.notify("⛵ VELA  ·  Auto mode OFF", "info");
         return;
     }
@@ -803,7 +799,7 @@ async function cmdAuto(ctx) {
     state.auto = true;
     state.auto_reject_count = 0;
     state.updated_at = new Date().toISOString();
-    persistStateFromCmd(state);
+    persistState(state);
     ctx.ui.notify("⛵ VELA  ·  ⚡ Auto mode ON — starting auto-dispatch loop…", "info");
     await runAutoLoop(ctx);
 }
@@ -845,7 +841,7 @@ async function runAutoLoop(ctx) {
             const s2 = findActivePipelineState(cwd);
             if (s2) {
                 s2.auto = false;
-                persistStateFromCmd(s2);
+                persistState(s2);
             }
             break;
         }
@@ -876,16 +872,6 @@ async function runAutoLoop(ctx) {
         }
         ctx.ui.notify(`⛵ VELA  ·  ${result.previous_step}  →  ${result.current_step}`, "info");
     }
-}
-// Helper to persist state without runtime fields
-function persistStateFromCmd(state) {
-    if (!state._path)
-        return;
-    const clean = { ...state };
-    delete clean._path;
-    delete clean._artifactDir;
-    delete clean._stale;
-    writeJSON(state._path, clean);
 }
 async function cmdAnalyze(parts, ctx) {
     const cwd = ctx.cwd;
@@ -1108,7 +1094,8 @@ function ensureGitignore(cwd) {
     let content = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
     const missing = entries.filter((e) => !content.includes(e));
     if (missing.length > 0) {
-        const addition = (content.endsWith("\n") ? "" : "\n") + "# Vela\n" + missing.join("\n") + "\n";
+        const header = content.includes("# Vela") ? "" : "# Vela\n";
+        const addition = (content.endsWith("\n") ? "" : "\n") + header + missing.join("\n") + "\n";
         writeFileSync(gitignorePath, content + addition);
     }
 }

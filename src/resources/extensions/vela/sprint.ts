@@ -77,13 +77,14 @@ export interface SliceNextAction {
 const SLICE_TRANSITIONS: Partial<Record<SliceStatus, Set<SliceStatus>>> = {
   planned: new Set<SliceStatus>(["queued", "skipped"]),
   queued:  new Set<SliceStatus>(["planned", "running", "skipped"]),
-  running: new Set<SliceStatus>(["queued", "done", "failed"]),
+  running: new Set<SliceStatus>(["queued", "done", "failed", "skipped"]),
   failed:  new Set<SliceStatus>(["queued"]),
 };
 
 const SPRINT_TRANSITIONS: Partial<Record<SprintStatus, Set<SprintStatus>>> = {
   planned: new Set<SprintStatus>(["running", "cancelled"]),
   running: new Set<SprintStatus>(["done", "failed", "cancelled"]),
+  failed:  new Set<SprintStatus>(["running", "cancelled"]),
 };
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -536,7 +537,7 @@ export function getNextSlice(plan: SprintPlan): SliceNextAction {
   );
 
   for (const slice of slices) {
-    if (slice.status !== "planned") continue;
+    if (slice.status !== "queued" && slice.status !== "planned") continue;
     const deps = slice.depends_on ?? [];
     if (deps.every((dep) => terminalIds.has(dep))) {
       return { action: "run", slice };
