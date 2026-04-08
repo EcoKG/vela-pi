@@ -119,26 +119,59 @@ function parseCliArgs(argv: string[]): CliFlags {
 }
 
 function printHelp(): void {
+  const c = (s: string) => `\x1b[36m${s}\x1b[0m`;   // cyan
+  const b = (s: string) => `\x1b[1m${s}\x1b[0m`;    // bold
+  const bc = (s: string) => `\x1b[1m\x1b[36m${s}\x1b[0m`; // bold cyan
+
   process.stdout.write(
-    `${APP_NAME} v${APP_VERSION} — Vela deterministic pipeline engine\n\n` +
-      `Usage: ${APP_NAME} [options] [message]\n\n` +
-      `Options:\n` +
-      `  --print, -p          Single-shot: send message, print response, exit\n` +
-      `  --mode text|json|rpc Output mode (use with --print)\n` +
-      `  --model <id>         Override model (e.g. anthropic/claude-opus-4-5)\n` +
-      `  --continue, -c       Continue most recent session\n` +
-      `  --no-session         Ephemeral session (no disk persistence)\n` +
-      `  --list-models        List available models and exit\n` +
-      `  --verbose            Verbose startup output\n` +
-      `  --version, -v        Print version\n` +
-      `  --help, -h           Print this help\n\n` +
-      `Vela commands (inside session):\n` +
-      `  /vela start "<request>"   Start a new pipeline\n` +
-      `  /vela status              Show pipeline state\n` +
-      `  /vela transition          Advance to next step\n` +
-      `  /vela dispatch <role>     Run agent for current step\n` +
-      `  /vela sprint run|status   Sprint orchestration\n` +
-      `  /vela help                Show all Vela commands\n`
+    `\n` +
+    `  ${bc("╔════════════════════════════════════════════╗")}\n` +
+    `  ${bc(`║  ⛵  VELA v${APP_VERSION} — pipeline engine`.padEnd(46))}${bc("║")}\n` +
+    `  ${bc("╚════════════════════════════════════════════╝")}\n` +
+    `\n` +
+    `  ${b("Usage:")}  ${APP_NAME} [options] [message]\n` +
+    `           ${APP_NAME} --print "your question"\n` +
+    `\n` +
+    `  ${c("── CLI Options ──────────────────────────────")}\n` +
+    `    --print, -p           Single-shot print mode\n` +
+    `    --mode text|json|rpc  Output format (with --print)\n` +
+    `    --model <id>          Override model\n` +
+    `    --continue, -c        Continue most recent session\n` +
+    `    --no-session          Ephemeral (no disk persistence)\n` +
+    `    --list-models [q]     List available models and exit\n` +
+    `    --verbose             Verbose startup output\n` +
+    `    --version, -v         Print version\n` +
+    `    --help, -h            This help\n` +
+    `\n` +
+    `  ${c("── Session Commands — /vela <cmd> ───────────")}\n` +
+    `    start "<req>" [--scale SCALE] [--preset PRESET]\n` +
+    `                          Start a new pipeline\n` +
+    `    status                Show current step and state\n` +
+    `    transition            Advance to next step\n` +
+    `    record <pass|fail|reject> [--summary TEXT]\n` +
+    `                          Record step verdict\n` +
+    `    sub-transition        Advance TDD sub-phase\n` +
+    `    branch [--mode auto|prompt|none]\n` +
+    `                          Create feature branch\n` +
+    `    commit [--message TEXT]\n` +
+    `                          Commit pipeline changes\n` +
+    `    dispatch [--role ROLE]\n` +
+    `                          Run agent for current step\n` +
+    `    sprint run|status|create|list\n` +
+    `                          Sprint orchestration\n` +
+    `    analyze [--step STEP] Run analysis agent\n` +
+    `    auto                  Toggle auto-advance mode\n` +
+    `    history               Show pipeline history\n` +
+    `    cancel                Cancel active pipeline\n` +
+    `    help                  Show in-session help\n` +
+    `\n` +
+    `  ${c("── Scales ───────────────────────────────────")}\n` +
+    `    small   trivial   init→execute→commit→finalize (4 steps)\n` +
+    `    medium  quick     + plan, verify (6 steps)\n` +
+    `    large   standard  full 12-step pipeline\n` +
+    `    ralph   TDD loop  execute↔verify up to 10×\n` +
+    `    hotfix            init→execute→commit (docs/config only)\n` +
+    `\n`
   );
 }
 
