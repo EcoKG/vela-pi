@@ -109,68 +109,65 @@ export function checkToolCall(
     const cmd =
       typeof toolInput.command === "string" ? toolInput.command : "";
 
-    // VK-06: Secret detection in Bash commands
+    // VK-06: Secret detection in Bash commands (all modes)
     for (const pattern of SECRET_PATTERNS) {
       if (pattern.test(cmd)) {
         return { blocked: true, reason: `[Vela VK-06] Potential secret detected in Bash command. Blocked.`, code: "VK-06" };
       }
     }
 
-    // readwrite: Bash allowed without further checks
-    if (mode === "readwrite") return { blocked: false };
-
-    // VK-08: Chain operators — block unless ALL segments are safe-read
-    if (CHAIN_OPERATOR_RE.test(cmd)) {
-      // Split on chain operators and check each segment
-      const segments = cmd.split(/&&|\|\||;|\|/).map(s => s.trim()).filter(Boolean);
-      const allSegmentsSafe = segments.every(seg => SAFE_BASH_READ.test(seg));
-
-      if (!allSegmentsSafe) {
-        return {
-          blocked: true,
-          reason: `[Vela VK-08] Bash chain operator blocked: not all segments are safe-read commands.\n` +
-            `  Unsafe segments: ${segments.filter(s => !SAFE_BASH_READ.test(s)).map(s => s.substring(0, 50)).join(", ")}\n` +
-            `  Tip: Run each command separately, or ensure all parts are read-only.`,
-          code: "VK-08",
-        };
-      }
-      // All segments are safe — allow the chain
-    }
-
-    if (mode === "read" || mode === "rw-artifact") {
-      // Allow safe read-only commands
-      if (SAFE_BASH_READ.test(cmd)) return { blocked: false };
-
-      // Block any write pattern
-      for (const pattern of BASH_WRITE_PATTERNS) {
-        if (pattern.test(cmd)) {
+    // Mode-based Bash restrictions (read, rw-artifact, write only).
+    // readwrite skips these and falls through to VG pipeline-state checks below,
+    // so VG-07 / VG-08 / VG-DESTROY / VG-14 remain enforced in readwrite mode.
+    if (mode !== "readwrite") {
+      // VK-08: Chain operators — block unless ALL segments are safe-read
+      if (CHAIN_OPERATOR_RE.test(cmd)) {
+        const segments = cmd.split(/&&|\|\||;|\|/).map(s => s.trim()).filter(Boolean);
+        const allSegmentsSafe = segments.every(seg => SAFE_BASH_READ.test(seg));
+        if (!allSegmentsSafe) {
           return {
             blocked: true,
-            reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
-            code: "VK-01",
+            reason: `[Vela VK-08] Bash chain operator blocked: not all segments are safe-read commands.\n` +
+              `  Unsafe segments: ${segments.filter(s => !SAFE_BASH_READ.test(s)).map(s => s.substring(0, 50)).join(", ")}\n` +
+              `  Tip: Run each command separately, or ensure all parts are read-only.`,
+            code: "VK-08",
           };
         }
+        // All segments safe — allow the chain
       }
 
-      // Not in safe-read list and not an explicit write — deny conservatively
-      return {
-        blocked: true,
-        reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
-        code: "VK-02",
-      };
+      if (mode === "read" || mode === "rw-artifact") {
+        // Write patterns checked BEFORE safe-read allowlist so that
+        // commands like "echo hello > file.txt" are never let through.
+        for (const pattern of BASH_WRITE_PATTERNS) {
+          if (pattern.test(cmd)) {
+            return {
+              blocked: true,
+              reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
+              code: "VK-01",
+            };
+          }
+        }
+        // Allow safe read-only commands
+        if (SAFE_BASH_READ.test(cmd)) return { blocked: false };
+        // Not in safe-read list — deny conservatively
+        return {
+          blocked: true,
+          reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
+          code: "VK-02",
+        };
+      }
+
+      if (mode === "write") {
+        return {
+          blocked: true,
+          reason: `[Vela VK-01] Bash is blocked in write mode. Use Write/Edit tools.`,
+          code: "VK-01",
+        };
+      }
     }
 
-    if (mode === "write") {
-      // Write mode: Bash is blocked entirely (use Write/Edit tools instead)
-      return {
-        blocked: true,
-        reason: `[Vela VK-01] Bash is blocked in write mode. Use Write/Edit tools.`,
-        code: "VK-01",
-      };
-    }
-
-    // readwrite: Bash allowed (with restrictions applied by the agent's own judgement)
-    return { blocked: false };
+    // readwrite: falls through to VG pipeline-state checks at end of function
   }
 
   // ── VK-03 / VK-04: Write/Edit tools in read mode ────────────────────────
