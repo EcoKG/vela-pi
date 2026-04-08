@@ -6,7 +6,7 @@
  * Flow:
  *   loader.ts sets PI_PACKAGE_DIR, PI_APP_NAME, PI_CODING_AGENT_DIR, VELA_EXT_PATH
  *     → imports this file
- *     → wires Vela extension via DefaultResourceLoader.additionalExtensionPaths
+ *     → wires Vela extension via createAgentSessionServices resourceLoaderOptions
  *     → runs InteractiveMode (TUI) or runPrintMode / runRpcMode
  *
  * Supported flags:
