@@ -8,6 +8,11 @@
  *
  * All logic runs synchronously inside the Pi SDK tool_call event handler,
  * replacing the old Claude Code Hook subprocess with a deterministic function.
+ *
+ * Tool permission lists (blocked_tools, artifact_write_only) and bash_policy
+ * are read from pipeline.json `modes.*` at runtime — pipeline.json is the
+ * single source of truth.  Hardcoded constants are kept only as fallbacks
+ * for callers that do not supply a PipelineDef.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -65,8 +70,22 @@ export const SENSITIVE_FILES = [
     "id_rsa",
     "id_ed25519",
 ];
-/** Tools that write files */
+/**
+ * Hardcoded fallback: tools that can write files.
+ * Used when no PipelineDef is supplied. The canonical list lives in
+ * pipeline.json → modes.read.blocked_tools.
+ */
 const WRITE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+/**
+ * Derive the set of write-capable tools from pipeline.json.
+ * "Write-capable" = tools blocked in read mode (modes.read.blocked_tools).
+ * Falls back to the hardcoded WRITE_TOOLS constant when no def is supplied.
+ */
+export function getEffectiveWriteTools(def) {
+    const readBlocked = def?.modes["read"]?.blocked_tools;
+    return readBlocked ? new Set(readBlocked) : WRITE_TOOLS;
+}
 // ─── Main Guard Function ──────────────────────────────────────────────────────
 /**
  * Evaluate all applicable gate rules for a tool call.
@@ -74,10 +93,19 @@ const WRITE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
  * Returns { blocked: false } to allow, or { blocked: true, reason, code } to deny.
  * Implements VK-01 through VK-08 (mode-based) and VG-00 through VG-12 (pipeline-state-based).
  *
- * @param state - Full pipeline state for VG-series gate checks (optional; VK-only if absent)
- * @param cwd   - Project working directory for delegation.json lookup (optional)
+ * Tool permission decisions (blocked_tools, artifact_write_only, bash_policy) are
+ * derived from pipelineDef.modes[mode] when provided — pipeline.json is the single
+ * source of truth.  All checks fall back to hardcoded constants when pipelineDef
+ * is absent, preserving full backward compatibility.
+ *
+ * @param state       - Full pipeline state for VG-series gate checks (optional; VK-only if absent)
+ * @param cwd         - Project working directory for delegation.json lookup (optional)
+ * @param pipelineDef - Loaded pipeline.json definition; drives data-driven mode enforcement
  */
-export function checkToolCall(toolName, toolInput, mode, state, cwd) {
+export function checkToolCall(toolName, toolInput, mode, state, cwd, pipelineDef) {
+    // Resolve effective write tools and current mode definition once
+    const effectiveWriteTools = getEffectiveWriteTools(pipelineDef);
+    const modeDef = pipelineDef?.modes[mode];
     // ── VK-01 / VK-02: Bash enforcement ──────────────────────────────────────
     if (toolName === "Bash") {
         const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
@@ -87,12 +115,14 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
                 return { blocked: true, reason: `[Vela VK-06] Potential secret detected in Bash command. Blocked.`, code: "VK-06" };
             }
         }
-        // readwrite: Bash allowed without further checks
-        if (mode === "readwrite")
+        // Resolve bash_policy from pipeline.json; fall back to mode-derived defaults
+        const bashPolicy = modeDef?.bash_policy ??
+            (mode === "write" ? "blocked" : mode === "readwrite" ? "restricted" : "read_only");
+        // restricted (readwrite): Bash allowed — return before chain-operator check
+        if (bashPolicy === "restricted")
             return { blocked: false };
         // VK-08: Chain operators — block unless ALL segments are safe-read
         if (CHAIN_OPERATOR_RE.test(cmd)) {
-            // Split on chain operators and check each segment
             const segments = cmd.split(/&&|\|\||;|\|/).map(s => s.trim()).filter(Boolean);
             const allSegmentsSafe = segments.every(seg => SAFE_BASH_READ.test(seg));
             if (!allSegmentsSafe) {
@@ -106,52 +136,50 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
             }
             // All segments are safe — allow the chain
         }
-        if (mode === "read" || mode === "rw-artifact") {
-            // Allow safe read-only commands
-            if (SAFE_BASH_READ.test(cmd))
-                return { blocked: false };
-            // Block any write pattern
-            for (const pattern of BASH_WRITE_PATTERNS) {
-                if (pattern.test(cmd)) {
-                    return {
-                        blocked: true,
-                        reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
-                        code: "VK-01",
-                    };
-                }
-            }
-            // Not in safe-read list and not an explicit write — deny conservatively
+        // blocked (write mode): Bash is blocked entirely
+        if (bashPolicy === "blocked") {
             return {
                 blocked: true,
-                reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
-                code: "VK-02",
-            };
-        }
-        if (mode === "write") {
-            // Write mode: Bash is blocked entirely (use Write/Edit tools instead)
-            return {
-                blocked: true,
-                reason: `[Vela VK-01] Bash is blocked in write mode. Use Write/Edit tools.`,
+                reason: `[Vela VK-01] Bash is blocked in ${mode} mode. Use Write/Edit tools.`,
                 code: "VK-01",
             };
         }
-        // readwrite: Bash allowed (with restrictions applied by the agent's own judgement)
-        return { blocked: false };
+        // read_only (read / rw-artifact): only safe read commands allowed
+        if (SAFE_BASH_READ.test(cmd))
+            return { blocked: false };
+        for (const pattern of BASH_WRITE_PATTERNS) {
+            if (pattern.test(cmd)) {
+                return {
+                    blocked: true,
+                    reason: `[Vela VK-01] Bash write command blocked in ${mode} mode: ${cmd.slice(0, 80)}`,
+                    code: "VK-01",
+                };
+            }
+        }
+        return {
+            blocked: true,
+            reason: `[Vela VK-02] Bash command not in safe-read allowlist (mode: ${mode}). Use Read/Glob/Grep instead.`,
+            code: "VK-02",
+        };
     }
-    // ── VK-03 / VK-04: Write/Edit tools in read mode ────────────────────────
-    if (WRITE_TOOLS.has(toolName)) {
-        if (mode === "read") {
+    // ── VK-03 / VK-04: Write-tool enforcement (data-driven from pipeline.json) ──
+    if (effectiveWriteTools.has(toolName)) {
+        // VK-03: tool appears in blocked_tools for this mode
+        const blockedInMode = modeDef
+            ? modeDef.blocked_tools.includes(toolName)
+            : mode === "read"; // fallback: all write tools blocked in read
+        if (blockedInMode) {
             return {
                 blocked: true,
-                reason: `[Vela VK-03] ${toolName} blocked in read mode.`,
+                reason: `[Vela VK-03] ${toolName} blocked in ${mode} mode.`,
                 code: "VK-03",
             };
         }
-        if (mode === "rw-artifact") {
-            if (toolName === "Edit" || toolName === "NotebookEdit") {
-                return { blocked: true, reason: `[Vela VK-04] ${toolName} is blocked in rw-artifact mode. Use Write tool instead.`, code: "VK-04" };
-            }
-            // Only allow writes to the artifact directory (VK-04 equivalent)
+        // VK-04: artifact_write_only — tool is allowed but only inside .vela/artifacts/
+        const artifactOnly = modeDef
+            ? modeDef.artifact_write_only === true
+            : mode === "rw-artifact"; // fallback
+        if (artifactOnly) {
             const filePath = typeof toolInput.file_path === "string"
                 ? toolInput.file_path
                 : typeof toolInput.path === "string"
@@ -160,7 +188,7 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
             if (filePath && !filePath.includes("/.vela/artifacts/")) {
                 return {
                     blocked: true,
-                    reason: `[Vela VK-04] ${toolName} in rw-artifact mode may only write inside .vela/artifacts/. Path: ${filePath}`,
+                    reason: `[Vela VK-04] ${toolName} in ${mode} mode may only write inside .vela/artifacts/. Path: ${filePath}`,
                     code: "VK-04",
                 };
             }
@@ -200,17 +228,13 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
         }
     }
     // ── VK-07: PM actor — write tools require delegation.json ────────────────
-    if (WRITE_TOOLS.has(toolName) && state) {
+    if (effectiveWriteTools.has(toolName) && state) {
         const PM_STEPS = new Set(["init", "branch", "commit", "finalize"]);
         if (PM_STEPS.has(state.current_step)) {
-            // PM actor check: if current step actor is "pm", writes need delegation
-            // (PM should orchestrate via dispatch, not write code directly)
-            // This is only enforced when we have pipeline state context
             const artifactDir = state._artifactDir ?? state.artifact_dir;
             if (artifactDir) {
                 const delegationPath = join(artifactDir, "delegation.json");
                 if (!existsSync(delegationPath)) {
-                    // Check if it's a source file (not artifact dir)
                     const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path :
                         typeof toolInput.path === "string" ? toolInput.path : "";
                     const isArtifactWrite = filePath.startsWith(artifactDir) ||
@@ -230,7 +254,7 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
     }
     // ══ VG-SERIES: Pipeline-state-based guards (require state context) ══════════
     if (state) {
-        const vgResult = checkGateGuard(toolName, toolInput, state, cwd);
+        const vgResult = checkGateGuard(toolName, toolInput, state, cwd, effectiveWriteTools);
         if (vgResult.blocked)
             return vgResult;
     }
@@ -240,8 +264,11 @@ export function checkToolCall(toolName, toolInput, mode, state, cwd) {
 /**
  * Pipeline-state-based gate guards (VG-00 through VG-12).
  * These require the full PipelineState to evaluate.
+ *
+ * @param writeTools - Set of write-capable tool names, derived from pipeline.json
+ *                     (defaults to hardcoded WRITE_TOOLS for backward compatibility)
  */
-function checkGateGuard(toolName, toolInput, state, cwd) {
+function checkGateGuard(toolName, toolInput, state, cwd, writeTools = WRITE_TOOLS) {
     const currentStep = state.current_step;
     const completedSteps = state.completed_steps ?? [];
     // ── VG-00: Block task management tools during active pipeline ──────────────
@@ -254,7 +281,7 @@ function checkGateGuard(toolName, toolInput, state, cwd) {
         };
     }
     // ── VG-05: pipeline-state.json direct write protection ────────────────────
-    if (WRITE_TOOLS.has(toolName)) {
+    if (writeTools.has(toolName)) {
         const filePath = typeof toolInput.file_path === "string"
             ? toolInput.file_path
             : typeof toolInput.path === "string"
@@ -298,8 +325,6 @@ function checkGateGuard(toolName, toolInput, state, cwd) {
             }
         }
         // ── VG-11: approval/review files only in team steps ─────────────────────
-        // Team steps: any step that has a team.worker_role in pipeline.json.
-        // Fallback to known defaults if pipeline def not accessible.
         const TEAM_STEPS = new Set([
             "research", "plan", "execute", "diff-summary", "verify",
         ]);
@@ -355,11 +380,9 @@ function checkGateGuard(toolName, toolInput, state, cwd) {
         }
     }
     // ── VG-14: Concurrent pipeline detection ───────────────────────────────────
-    // Block starting a second pipeline if one is already active (Bash-based init)
     if (toolName === "Bash" && cwd) {
         const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
         if (/vela[-_]?engine.*init\b/.test(cmd) || /\/vela\s+start\b/.test(cmd)) {
-            // If the state passed in is already active, block
             if (state.status === "active") {
                 return {
                     blocked: true,
@@ -370,12 +393,10 @@ function checkGateGuard(toolName, toolInput, state, cwd) {
         }
     }
     // ── VG-15: *.vela-tmp accumulation guard ───────────────────────────────────
-    if (WRITE_TOOLS.has(toolName)) {
+    if (writeTools.has(toolName)) {
         const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path :
             typeof toolInput.path === "string" ? toolInput.path : "";
         if (filePath && filePath.endsWith(".vela-tmp")) {
-            // Allow creation but warn — cleanup is the pipeline's responsibility
-            // Actually block direct writes to .vela-tmp to prevent accumulation
             return {
                 blocked: true,
                 reason: `[Vela VG-15] Direct writes to *.vela-tmp files are blocked. Use pipeline artifact dir instead.`,

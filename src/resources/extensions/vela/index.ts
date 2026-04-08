@@ -140,7 +140,8 @@ export default async function registerExtension(
         event.input as Record<string, unknown>,
         mode,
         state,
-        ctx.cwd
+        ctx.cwd,
+        def
       );
 
       if (result.blocked) {
