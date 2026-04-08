@@ -40,10 +40,34 @@ export default async function registerExtension(
     async (_event: SessionStartEvent, ctx: ExtensionContext) => {
       const state = findActivePipelineState(ctx.cwd);
       if (state) {
+        // Inline box helpers (commands.ts helpers not exported)
+        const W = 52;
+        const top = (title: string) => {
+          const dashes = "─".repeat(Math.max(0, W - 4 - title.length - 1));
+          return `╭─ ${title} ${dashes}╮`;
+        };
+        const line = (content: string) => {
+          const inner = W - 4;
+          const c = content.length > inner ? content.slice(0, inner - 1) + "…" : content;
+          return `│  ${c.padEnd(inner)}│`;
+        };
+        const bot = (note: string) => {
+          const dashes = "─".repeat(Math.max(0, W - 4 - note.length - 1));
+          return `╰─ ${note} ${dashes}╯`;
+        };
+
+        const stepInfo = state.current_step_index !== undefined
+          ? `${state.current_step}  (${state.current_step_index + 1}/${(state.steps ?? []).length})`
+          : state.current_step;
+
         ctx.ui.notify(
-          `[Vela] Active pipeline detected at step "${state.current_step}" ` +
-            `(${state.task_type}: "${state.request.slice(0, 60)}...").\n` +
-            "Use /vela status for details.",
+          [
+            top("⛵  VELA — Active Pipeline"),
+            line(`${"Course:".padEnd(9)} ${state.request}`),
+            line(`${"Heading:".padEnd(9)} ${stepInfo}`),
+            line(`${"Type:".padEnd(9)} ${state.task_type ?? state.pipeline_type}`),
+            bot("/vela status for nav chart"),
+          ].join("\n"),
           "info"
         );
       }

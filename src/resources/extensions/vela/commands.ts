@@ -54,6 +54,36 @@ import {
   type SprintSlice,
 } from "./sprint.js";
 
+// ─── UI Box Helpers ───────────────────────────────────────────────────────────
+
+const BOX_W = 52; // total box width including border chars
+
+/** ╭─ Title ──────────────╮ */
+function boxTop(title = "", w = BOX_W): string {
+  const dashes = "─".repeat(Math.max(0, w - 4 - title.length - (title ? 1 : 0)));
+  return title ? `╭─ ${title} ${dashes}╮` : `╭${"─".repeat(w - 2)}╮`;
+}
+/** │  content padded      │ */
+function boxLine(content = "", w = BOX_W): string {
+  const inner = w - 4;
+  // Truncate if content exceeds inner width to keep box aligned
+  const c = content.length > inner ? content.slice(0, inner - 1) + "…" : content;
+  return `│  ${c.padEnd(inner)}│`;
+}
+/** ├──────────────────────┤ */
+function boxSep(w = BOX_W): string {
+  return `├${"─".repeat(w - 2)}┤`;
+}
+/** ╰─ note ───────────────╯ */
+function boxBot(note = "", w = BOX_W): string {
+  const dashes = "─".repeat(Math.max(0, w - 4 - note.length - (note ? 1 : 0)));
+  return note ? `╰─ ${note} ${dashes}╯` : `╰${"─".repeat(w - 2)}╯`;
+}
+/** Pad a label to fixed width for aligned key: value rows */
+function lbl(label: string, width = 9): string {
+  return label.padEnd(width);
+}
+
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 export function registerVelaCommands(pi: ExtensionAPI): void {
@@ -303,18 +333,25 @@ async function cmdStart(
 
   ensureGitignore(cwd);
 
-  const stepList = steps.map((s) => s.id).join(" → ");
+  // Build compact route string: first two + … + last, or all if ≤5
+  const stepIds = steps.map((s) => s.id);
+  const route =
+    stepIds.length <= 5
+      ? stepIds.join(" → ")
+      : `${stepIds.slice(0, 2).join(" → ")} → … → ${stepIds[stepIds.length - 1]}`;
 
-  ctx.ui.notify(
-    `[Vela] Pipeline initialised.\n` +
-      `  Scale:    ${scale} → ${pipelineType}\n` +
-      `  Type:     ${taskType}\n` +
-      `  Steps:    ${stepList}\n` +
-      `  Artifact: .vela/artifacts/${artifactDirName}\n` +
-      (cleaned > 0 ? `  Cleaned ${cleaned} old cancelled artifact(s).\n` : "") +
-      "\nRun /vela status to check state.",
-    "info"
-  );
+  const lines = [
+    boxTop("⛵  VELA — Pipeline Launched"),
+    boxLine(`${lbl("Course:")} ${cleanRequest}`),
+    boxLine(`${lbl("Scale:")}  ${scale} → ${pipelineType}`),
+    boxLine(`${lbl("Type:")}   ${taskType}`),
+    boxLine(`${lbl("Route:")}  ${route}`),
+    boxLine(`${lbl("Artifact:")} .vela/artifacts/${artifactDirName}`),
+    ...(cleaned > 0 ? [boxLine(`Cleaned ${cleaned} old cancelled artifact(s).`)] : []),
+    boxBot(),
+  ];
+
+  ctx.ui.notify(lines.join("\n"), "info");
 }
 
 async function cmdStatus(ctx: ExtensionCommandContext): Promise<void> {
@@ -338,47 +375,57 @@ async function cmdStatus(ctx: ExtensionCommandContext): Promise<void> {
   const filled = Math.round((completedCount / Math.max(totalCount, 1)) * barWidth);
   const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
 
-  // Step list
-  const stepLines = steps.map((s, i) => {
-    const isDone = state.completed_steps?.includes(s.id) ?? i < stepIdx;
-    const isCurrent = s.id === state.current_step;
-    const icon = isDone ? "✅" : isCurrent ? "⏳" : "○ ";
-    return `  ${icon} ${s.id}`;
-  });
-
   const elapsed = state.created_at
     ? Math.round((Date.now() - new Date(state.created_at).getTime()) / 60_000)
     : 0;
 
+  const artifactSlug =
+    state._artifactDir?.split("/").pop() ?? state.artifact_dir.split("/").pop() ?? "";
+  const revisions = state.revisions ?? {};
+
+  // Build step grid: 3 columns, each cell 15 chars wide
+  const COLS = 3;
+  const CELL = 15;
+  const stepCells = steps.map((s, i) => {
+    const isDone = state.completed_steps?.includes(s.id) ?? i < stepIdx;
+    const isCurrent = s.id === state.current_step;
+    const icon = isDone ? "✓" : isCurrent ? "▶" : "·";
+    const label = isCurrent ? `${s.id} ←` : s.id;
+    return `${icon} ${label}`;
+  });
+  const stepRows: string[] = [];
+  for (let i = 0; i < stepCells.length; i += COLS) {
+    const row = stepCells.slice(i, i + COLS);
+    stepRows.push(row.map((c) => c.padEnd(CELL)).join("  ").trimEnd());
+  }
+
   const lines = [
-    `⛵ VELA PIPELINE STATUS`,
-    `${"─".repeat(40)}`,
-    `  Request: ${state.request.substring(0, 50)}`,
-    `  Scale:   ${state.scale ?? state.pipeline_type}`,
-    `  Step:    ${state.current_step} (${stepIdx + 1}/${totalCount})`,
-    `  Mode:    ${currentStep?.mode ?? "unknown"}`,
-    `  Actor:   ${currentStep?.actor ?? "unknown"}`,
-    ``,
-    `  Progress: [${bar}] ${completedCount}/${totalCount}`,
-    `  Elapsed:  ${elapsed}m`,
-    `  Artifact: .vela/artifacts/${state._artifactDir?.split("/").pop() ?? state.artifact_dir.split("/").pop()}`,
-    ``,
-    `  Steps:`,
-    ...stepLines,
+    boxTop("⛵  VELA — Navigation Chart"),
+    boxLine(`${lbl("Course:")} ${state.request}`),
+    boxLine(`${lbl("Scale:")}  ${state.scale ?? state.pipeline_type}`),
+    boxLine(`${lbl("Heading:")} ${state.current_step}  (${stepIdx + 1}/${totalCount})  ·  mode: ${currentStep?.mode ?? "??"}`),
+    boxLine(`${lbl("Actor:")}  ${currentStep?.actor ?? "unknown"}`),
+    boxSep(),
+    boxLine(`Progress: ${bar}  ${completedCount}/${totalCount}  ·  elapsed ${elapsed}m`),
+    boxSep(),
+    ...stepRows.map((r) => boxLine(r)),
   ];
 
-  if (state.auto) lines.push(``, `  ⚡ Auto mode ON`);
-  const revisions = state.revisions ?? {};
+  // Extra info lines
   if (revisions[state.current_step]) {
-    lines.push(`  Revisions: ${revisions[state.current_step]}/${currentStep?.max_revisions ?? "?"}`);
+    lines.push(boxLine(`Revisions: ${revisions[state.current_step]}/${currentStep?.max_revisions ?? "?"}`));
   }
   if (state.git?.pipeline_branch) {
-    lines.push(`  Branch:    ${state.git.pipeline_branch}`);
+    lines.push(boxLine(`Branch:  ${state.git.pipeline_branch}`));
+  }
+  if (state.auto) {
+    lines.push(boxLine("⚡ Auto mode ON"));
   }
   if (state._stale) {
-    lines.push(``, `  ⚠ Pipeline stale (>24h inactive)`);
+    lines.push(boxLine("⚠  Pipeline stale (>24h inactive)"));
   }
-  lines.push(`${"─".repeat(40)}`);
+  lines.push(boxLine(`Artifact: .vela/artifacts/${artifactSlug}`));
+  lines.push(boxBot());
 
   ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -411,14 +458,25 @@ async function cmdTransition(ctx: ExtensionCommandContext): Promise<void> {
   }
 
   if (result.completed) {
-    ctx.ui.notify("[Vela] Pipeline completed successfully! 🎉", "info");
+    ctx.ui.notify(
+      [
+        boxTop("⛵  VELA — Pipeline Complete"),
+        boxLine("All steps done. Fair winds! ⚓"),
+        boxBot(),
+      ].join("\n"),
+      "info"
+    );
     return;
   }
 
   ctx.ui.notify(
-    `[Vela] Advanced: ${result.previous_step} → ${result.current_step}\n` +
-      `  Step: ${result.current_step_name}\n` +
-      `  Mode: ${result.current_mode}`,
+    [
+      boxTop("⛵  VELA — Course Change"),
+      boxLine(`${result.previous_step}  →  ${result.current_step}`),
+      boxLine(`${lbl("Step:")}  ${result.current_step_name ?? result.current_step}`),
+      boxLine(`${lbl("Mode:")}  ${result.current_mode ?? "unknown"}`),
+      boxBot(),
+    ].join("\n"),
     "info"
   );
 }
@@ -454,7 +512,7 @@ async function cmdRecord(
     : "";
 
   ctx.ui.notify(
-    `[Vela] Recorded ${result.verdict} for step "${result.step}" (revision ${result.revision}).${autoNote}`,
+    `⛵ VELA  ·  ${result.verdict?.toUpperCase()} recorded — step "${result.step}" (rev ${result.revision})${autoNote}`,
     "info"
   );
 }
@@ -584,15 +642,20 @@ async function cmdHistory(ctx: ExtensionCommandContext): Promise<void> {
     return;
   }
 
-  const lines = ["[Vela] Pipeline history:"];
+  const lines = [
+    boxTop("⛵  VELA — Pipeline History"),
+    boxLine(`${"Date".padEnd(9)} ${"Status".padEnd(10)} ${"Step".padEnd(13)} Course`),
+    boxSep(),
+  ];
   for (const p of pipelines.slice(0, 20)) {
-    const icon =
-      p.status === "completed" ? "✅" : p.status === "cancelled" ? "❌" : "🔄";
-    lines.push(
-      `  ${icon} ${p.date} ${p.slug.split("-").slice(2).join("-").substring(0, 25).padEnd(25)} ` +
-        `${p.status.padEnd(10)} step:${p.step}`
-    );
+    const icon = p.status === "completed" ? "✓" : p.status === "cancelled" ? "✗" : "▶";
+    const date = p.date;
+    const status = `${icon} ${p.status}`.padEnd(10);
+    const step = p.step.padEnd(13);
+    const course = p.request.substring(0, 16);
+    lines.push(boxLine(`${date}  ${status}  ${step}  ${course}`));
   }
+  lines.push(boxBot());
 
   ctx.ui.notify(lines.join("\n"), "info");
 }
@@ -940,7 +1003,7 @@ async function cmdDispatch(
   const mode = getCurrentMode(state, def);
 
   ctx.ui.notify(
-    `[Vela] Dispatching agent: role=${role}, mode=${mode}\n  This may take a few minutes...`,
+    `⛵ VELA  ·  Dispatching ${role}… (${mode} mode)`,
     "info"
   );
 
@@ -955,7 +1018,12 @@ async function cmdDispatch(
 
   if (!result.ok) {
     ctx.ui.notify(
-      `[Vela] Agent dispatch failed (${role}): ${result.error}`,
+      [
+        boxTop("⛵  VELA — Dispatch Failed"),
+        boxLine(`${lbl("Role:")}    ${role}`),
+        boxLine(`${lbl("Error:")}   ${result.error ?? "unknown"}`),
+        boxBot(),
+      ].join("\n"),
       "warning"
     );
     return;
@@ -963,10 +1031,15 @@ async function cmdDispatch(
 
   const duration = result.durationMs ? `${Math.round(result.durationMs / 1000)}s` : "";
   ctx.ui.notify(
-    `[Vela] Agent completed: ${role}\n` +
-      `  Artifact: ${result.artifact ?? "—"}\n` +
-      (duration ? `  Duration: ${duration}\n` : "") +
-      "\nRun /vela transition when ready to advance.",
+    [
+      boxTop("⛵  VELA — Agent Complete"),
+      boxLine(`${lbl("Role:")}     ${role}`),
+      boxLine(`${lbl("Artifact:")} ${result.artifact ?? "—"}`),
+      ...(duration ? [boxLine(`${lbl("Duration:")} ${duration}`)] : []),
+      boxSep(),
+      boxLine("▸ Run /vela transition when ready"),
+      boxBot(),
+    ].join("\n"),
     "info"
   );
 }
@@ -982,7 +1055,7 @@ async function cmdAuto(ctx: ExtensionCommandContext): Promise<void> {
     state.auto = false;
     state.updated_at = new Date().toISOString();
     persistStateFromCmd(state);
-    ctx.ui.notify("[Vela] ⏸ Auto mode OFF.", "info");
+    ctx.ui.notify("⛵ VELA  ·  Auto mode OFF", "info");
     return;
   }
 
@@ -991,7 +1064,7 @@ async function cmdAuto(ctx: ExtensionCommandContext): Promise<void> {
   state.auto_reject_count = 0;
   state.updated_at = new Date().toISOString();
   persistStateFromCmd(state);
-  ctx.ui.notify("[Vela] ⚡ Auto mode ON — starting auto-dispatch loop...", "info");
+  ctx.ui.notify("⛵ VELA  ·  ⚡ Auto mode ON — starting auto-dispatch loop…", "info");
 
   await runAutoLoop(ctx);
 }
@@ -1015,15 +1088,14 @@ async function runAutoLoop(ctx: ExtensionCommandContext): Promise<void> {
     // user/pm steps: pause and wait for manual action
     if (currentStep.actor === "user" || currentStep.actor === "pm") {
       ctx.ui.notify(
-        `[Vela] Auto paused at "${state.current_step}" (${currentStep.actor} step).\n` +
-        `  Complete manually then run /vela transition`,
+        `⛵ VELA  ·  Auto paused at "${state.current_step}" (${currentStep.actor} step) — complete manually then /vela transition`,
         "info"
       );
       break;
     }
 
     // Dispatch agent for current step
-    ctx.ui.notify(`[Vela] Auto: dispatching ${state.current_step}...`, "info");
+    ctx.ui.notify(`⛵ VELA  ·  Auto dispatching ${state.current_step}…`, "info");
     const artifactDir = state._artifactDir ?? state.artifact_dir;
     const mode = getCurrentMode(state, def);
     const dispatchResult = await runVelaAgent({
@@ -1056,19 +1128,26 @@ async function runAutoLoop(ctx: ExtensionCommandContext): Promise<void> {
     const result = transitionPipeline(freshState2, freshDef);
 
     if (result.completed) {
-      ctx.ui.notify("[Vela] ✅ Auto: Pipeline completed!", "info");
+      ctx.ui.notify(
+        [
+          boxTop("⛵  VELA — Auto Complete"),
+          boxLine("All steps done. Fair winds! ⚓"),
+          boxBot(),
+        ].join("\n"),
+        "info"
+      );
       break;
     }
 
     if (!result.ok) {
       ctx.ui.notify(
-        `[Vela] Auto: transition blocked at "${freshState2.current_step}"\n  ${result.error}\n  Missing: ${result.missing?.join(", ")}`,
+        `⛵ VELA  ·  Auto blocked at "${freshState2.current_step}" — ${result.error}${result.missing?.length ? ` (missing: ${result.missing.join(", ")})` : ""}`,
         "warning"
       );
       break;
     }
 
-    ctx.ui.notify(`[Vela] Auto: ${result.previous_step} → ${result.current_step}`, "info");
+    ctx.ui.notify(`⛵ VELA  ·  ${result.previous_step}  →  ${result.current_step}`, "info");
   }
 }
 
@@ -1194,46 +1273,52 @@ async function cmdCancel(ctx: ExtensionCommandContext): Promise<void> {
     }
   }
 
-  ctx.ui.notify(
-    `[Vela] Pipeline cancelled at step "${state.current_step}".\n` +
-      `  Artifact: .vela/artifacts/${state._artifactDir?.split("/").pop() ?? ""}` +
-      (hints.length ? "\n  " + hints.join("\n  ") : ""),
-    "info"
-  );
+  const cancelLines = [
+    boxTop("⛵  VELA — Pipeline Cancelled"),
+    boxLine(`Stopped at:  ${state.current_step}`),
+    boxLine(`Artifact:    .vela/artifacts/${state._artifactDir?.split("/").pop() ?? ""}`),
+    ...(hints.length ? [boxSep(), ...hints.map((h) => boxLine(h))] : []),
+    boxBot(),
+  ];
+  ctx.ui.notify(cancelLines.join("\n"), "info");
 }
 
 function cmdHelp(ctx: ExtensionCommandContext): void {
   ctx.ui.notify(
     [
-      "⛵  Vela — Pipeline Commands",
-      "",
-      "  ── Core ─────────────────────────────────────",
-      "  /vela start \"<req>\" [--scale SCALE] [--preset PRESET]",
-      "  /vela status",
-      "  /vela transition",
-      "  /vela record <pass|fail|reject> [--summary TEXT]",
-      "  /vela sub-transition",
-      "  /vela branch [--mode auto|prompt|none]",
-      "  /vela commit [--message TEXT]",
-      "  /vela dispatch [--role ROLE]",
-      "  /vela sprint run|status|create|list",
-      "  /vela analyze [--step STEP]",
-      "  /vela auto",
-      "  /vela history",
-      "  /vela cancel",
-      "  /vela help",
-      "",
-      "  ── Scales ───────────────────────────────────",
-      "  small   → trivial   (4 steps)",
-      "  medium  → quick     (6 steps)",
-      "  large   → standard  (12 steps)",
-      "  ralph   → TDD loop",
-      "  hotfix  → docs/config patch",
-      "",
-      "  ── 12-step pipeline ─────────────────────────",
-      "  init → research → plan → plan-check → checkpoint →",
-      "  branch → execute → verify → diff-summary →",
-      "  learning → commit → finalize",
+      boxTop("⛵  VELA — Command Reference"),
+      boxLine(""),
+      boxLine("PIPELINE"),
+      boxLine('  /vela start "<req>" --scale SCALE'),
+      boxLine("  /vela status"),
+      boxLine("  /vela transition"),
+      boxLine("  /vela record <pass|fail|reject> [--summary TEXT]"),
+      boxLine("  /vela sub-transition"),
+      boxLine("  /vela dispatch [--role ROLE]"),
+      boxLine("  /vela branch [--mode auto|prompt|none]"),
+      boxLine("  /vela commit [--message TEXT]"),
+      boxLine("  /vela auto / history / cancel / help"),
+      boxLine(""),
+      boxLine("SCALES"),
+      boxLine("  small  → trivial   (4 steps)"),
+      boxLine("  medium → quick     (6 steps)"),
+      boxLine("  large  → standard  (12 steps)"),
+      boxLine("  ralph  → TDD loop  (execute ↔ verify ×10)"),
+      boxLine("  hotfix → patch     (docs/config only)"),
+      boxLine(""),
+      boxLine("ROUTE  (large / standard)"),
+      boxLine("  init → research → plan → plan-check →"),
+      boxLine("  checkpoint → branch → execute → verify →"),
+      boxLine("  diff-summary → learning → commit → finalize"),
+      boxLine(""),
+      boxLine("SPRINT"),
+      boxLine('  /vela sprint run "<req>"'),
+      boxLine("  /vela sprint status / resume / cancel"),
+      boxLine(""),
+      boxLine("ANALYZE"),
+      boxLine("  /vela analyze deps / security / quality / all"),
+      boxLine(""),
+      boxBot(),
     ].join("\n"),
     "info"
   );
