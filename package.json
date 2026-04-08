@@ -25,7 +25,8 @@
   "scripts": {
     "build": "tsc && npm run copy-assets",
     "copy-assets": "node -e \"const {cpSync,mkdirSync}=require('fs'); mkdirSync('dist/resources/extensions/vela/templates',{recursive:true}); cpSync('src/resources/extensions/vela/templates','dist/resources/extensions/vela/templates',{recursive:true});\"",
-    "dev": "node --experimental-strip-types src/loader.ts"
+    "dev": "node --experimental-strip-types src/loader.ts",
+    "test": "tsc --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir dist --rootDir src --skipLibCheck --noCheck --sourceMap true src/resources/extensions/vela/guards.ts src/resources/extensions/vela/pipeline.ts src/resources/extensions/vela/git.ts src/resources/extensions/vela/guards.test.ts && node --test dist/resources/extensions/vela/guards.test.js"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.65.2"

@@ -98,7 +98,7 @@ export default async function registerExtension(pi) {
             return; // no active pipeline → pass through
         const def = loadPipelineDefinition(ctx.cwd);
         const mode = getCurrentMode(state, def);
-        const result = checkToolCall(event.toolName, event.input, mode, state, ctx.cwd);
+        const result = checkToolCall(event.toolName, event.input, mode, state, ctx.cwd, def);
         if (result.blocked) {
             return {
                 block: true,
